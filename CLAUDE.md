@@ -8,8 +8,10 @@ flagged as an assumption, with a visible credibility score. It is NOT a chatbot.
 The visible structure IS the product.
 
 ## Current phase
-Phase 2: environment setup. Goal is a working code -> deploy -> URL pipeline
-with the server-side API key pattern in place, BEFORE any real logic.
+Phase 3: units-based branch. Static UI shell + deterministic math layer are
+both in place (math lives in `lib/units-math.ts` and is standalone — not yet
+wired to the UI, by design). Next: agents wired in one at a time as isolated
+calls (researcher, then CRAAP validator, then structural validator).
 The full spec is complete; the planning doc in Google Drive is the source of truth.
 
 ## Architecture — two layers
