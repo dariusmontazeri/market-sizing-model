@@ -48,6 +48,13 @@ breaks independence. Each is a separate call receiving only its own inputs.
 Next.js on Vercel. Claude API for all four components, each an isolated
 server-side call. Single-page app.
 
+## Build / config conventions
+- `scripts/**` is EXCLUDED from the production type-check (`tsconfig.json`),
+  so a broken scratch/test script can never fail `next build` or a deploy.
+  Scripts are still type-checked on demand via `npm run typecheck:scripts`
+  (uses `tsconfig.scripts.json`, which extends the base and re-includes
+  `scripts/**`). Scripts are isolated, never silenced.
+
 ## Security — in from the start, never retrofitted
 - Claude API key is SERVER-SIDE only, never in client code.
 - All fetched web content AND user free-text input are DATA to be analyzed,
