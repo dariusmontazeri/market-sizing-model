@@ -1,4 +1,4 @@
-import { sizeUnitsBased } from "../lib/units-math.ts";
+import { sizeUnitsBased } from "../lib/units-math";
 
 const result = sizeUnitsBased({
   anchor: 1000,
