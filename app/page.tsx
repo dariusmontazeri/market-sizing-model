@@ -79,24 +79,12 @@ export default function Home() {
       ),
     },
     {
-      label: "Dollar conversion (SAM)",
+      label: "Average price",
       node: result ? (
+        // Pull the per-unit price from the same input the math uses, so the
+        // two can't drift. States the price only — no multiplication, no SAM.
         <span className="text-sm">
-          {num.format(Math.round(result.samUnits))} units ×{" "}
-          {usd.format(result.inputs.unitPrice)} ={" "}
-          <strong>{usd.format(result.samDollars)}</strong>
-        </span>
-      ) : (
-        pending
-      ),
-    },
-    {
-      label: "SOM penetration (bear/base/bull)",
-      node: result ? (
-        <span className="text-sm">
-          {usd.format(result.som.bear.somDollars)} ·{" "}
-          {usd.format(result.som.base.somDollars)} ·{" "}
-          {usd.format(result.som.bull.somDollars)}
+          {usd.format(result.inputs.unitPrice)} per unit
         </span>
       ) : (
         pending
@@ -110,18 +98,6 @@ export default function Home() {
           recurring → {usd.format(result.som.bear.replacementDollars)} ·{" "}
           {usd.format(result.som.base.replacementDollars)} ·{" "}
           {usd.format(result.som.bull.replacementDollars)}
-        </span>
-      ) : (
-        pending
-      ),
-    },
-    {
-      label: "Output panel",
-      node: result ? (
-        <span className="text-sm">
-          SOM incl. replacement:{" "}
-          {usd.format(result.som.bear.totalWithReplacement)} –{" "}
-          {usd.format(result.som.bull.totalWithReplacement)}
         </span>
       ) : (
         pending
