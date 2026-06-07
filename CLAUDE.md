@@ -8,10 +8,15 @@ flagged as an assumption, with a visible credibility score. It is NOT a chatbot.
 The visible structure IS the product.
 
 ## Current phase
-Phase 3: units-based branch. Static UI shell + deterministic math layer are
-both in place (math lives in `lib/units-math.ts` and is standalone — not yet
-wired to the UI, by design). Next: agents wired in one at a time as isolated
-calls (researcher, then CRAAP validator, then structural validator).
+Phase 3: units-based branch. Deterministic math (`lib/units-math.ts`) is now
+WIRED to the UI: "Run sizing" runs it on a HARDCODED, unvalidated Germany
+prosthetics input and fills the waterfall (anchor -> filters -> SAM$ -> SOM
+bear/base/bull -> replacement). The typed Country/Market fields do NOT drive
+the numbers; real inputs come from the researcher later. Credibility score
+stays "pending" until the CRAAP validator exists — never faked. Number accuracy
+is NOT yet validated against the hand-done Germany figures (that is Phase 4).
+Next: agents wired in one at a time as isolated calls (researcher, then CRAAP
+validator, then structural validator).
 The full spec is complete; the planning doc in Google Drive is the source of truth.
 
 ## Architecture — two layers

@@ -1,26 +1,140 @@
-const waterfallSections = [
-  "Market definition",
-  "Anchor",
-  "Filters",
-  "Dollar conversion (SAM)",
-  "SOM penetration (bear/base/bull)",
-  "Replacement layer",
-  "Output panel",
-];
+"use client";
+
+import { useState } from "react";
+import { sizeUnitsBased, type SizingInput, type SizingResult } from "../lib/units-math";
+
+// Hardcoded Germany prosthetics inputs — Phase 3 pipeline proof ONLY.
+// UNVALIDATED PLACEHOLDERS: these are not researched and are NOT checked
+// against the hand-done Germany figures (accuracy is Phase 4). The real anchor
+// and filters will come from the researcher agent in a later phase. Do not
+// build upstream population math or a research step to derive these.
+const GERMANY_PROSTHETICS_PLACEHOLDER: SizingInput = {
+  anchor: 84_000_000, // Germany population — UNVALIDATED placeholder single anchor
+  filters: [0.0019, 0.78], // [share with relevant limb loss, share who are device candidates] — placeholder
+  unitPrice: 7_500, // $ per prosthetic device — placeholder
+  replacementRate: 0.22, // recurring replacement layer as a fraction of SOM — placeholder
+};
+
+const usd = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 0,
+});
+const num = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 const somScenarios = [
-  { label: "Bear", rate: "1%" },
-  { label: "Base", rate: "3%" },
-  { label: "Bull", rate: "5%" },
-];
+  { key: "bear", label: "Bear", rate: "1%" },
+  { key: "base", label: "Base", rate: "3%" },
+  { key: "bull", label: "Bull", rate: "5%" },
+] as const;
 
 export default function Home() {
+  const [result, setResult] = useState<SizingResult | null>(null);
+
+  const runSizing = () => {
+    // All arithmetic lives in lib/units-math.ts; the UI only renders what it returns.
+    setResult(sizeUnitsBased(GERMANY_PROSTHETICS_PLACEHOLDER));
+  };
+
+  const pending = (
+    <span className="text-sm italic text-zinc-300">— pending —</span>
+  );
+
+  // Each waterfall row renders a value from `result`; nothing is computed here.
+  const waterfallRows: { label: string; node: React.ReactNode }[] = [
+    {
+      label: "Market definition",
+      node: result ? (
+        <span className="text-sm">
+          Germany · Prosthetics{" "}
+          <span className="text-zinc-400">(placeholder inputs)</span>
+        </span>
+      ) : (
+        pending
+      ),
+    },
+    {
+      label: "Anchor",
+      node: result ? (
+        <span className="text-sm">
+          {num.format(result.inputs.anchor)}{" "}
+          <span className="text-zinc-400">starting population</span>
+        </span>
+      ) : (
+        pending
+      ),
+    },
+    {
+      label: "Filters",
+      node: result ? (
+        <span className="text-sm">
+          {result.filterChain
+            .map(
+              (s) => `× ${s.rate} → ${num.format(Math.round(s.countAfter))}`,
+            )
+            .join("   ·   ")}
+        </span>
+      ) : (
+        pending
+      ),
+    },
+    {
+      label: "Dollar conversion (SAM)",
+      node: result ? (
+        <span className="text-sm">
+          {num.format(Math.round(result.samUnits))} units ×{" "}
+          {usd.format(result.inputs.unitPrice)} ={" "}
+          <strong>{usd.format(result.samDollars)}</strong>
+        </span>
+      ) : (
+        pending
+      ),
+    },
+    {
+      label: "SOM penetration (bear/base/bull)",
+      node: result ? (
+        <span className="text-sm">
+          {usd.format(result.som.bear.somDollars)} ·{" "}
+          {usd.format(result.som.base.somDollars)} ·{" "}
+          {usd.format(result.som.bull.somDollars)}
+        </span>
+      ) : (
+        pending
+      ),
+    },
+    {
+      label: "Replacement layer",
+      node: result ? (
+        <span className="text-sm">
+          +{Math.round(result.replacementHonestyCheck.replacementRate * 100)}%
+          recurring → {usd.format(result.som.bear.replacementDollars)} ·{" "}
+          {usd.format(result.som.base.replacementDollars)} ·{" "}
+          {usd.format(result.som.bull.replacementDollars)}
+        </span>
+      ) : (
+        pending
+      ),
+    },
+    {
+      label: "Output panel",
+      node: result ? (
+        <span className="text-sm">
+          SOM incl. replacement:{" "}
+          {usd.format(result.som.bear.totalWithReplacement)} –{" "}
+          {usd.format(result.som.bull.totalWithReplacement)}
+        </span>
+      ) : (
+        pending
+      ),
+    },
+  ];
+
   return (
     <main className="mx-auto w-full max-w-3xl px-6 py-10 space-y-10">
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold">Market Sizing Model</h1>
         <p className="text-sm text-zinc-500">
-          Units-based method — Phase 3 static shell
+          Units-based method — Phase 3 (deterministic pipeline)
         </p>
       </header>
 
@@ -45,8 +159,14 @@ export default function Home() {
               className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
             />
           </label>
+          <p className="text-xs text-zinc-400">
+            Note: these fields don&apos;t drive the numbers yet. &quot;Run
+            sizing&quot; uses hardcoded placeholder Germany inputs to prove the
+            math pipeline; real values come from the researcher agent later.
+          </p>
           <button
             type="button"
+            onClick={runSizing}
             className="rounded bg-black px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
           >
             Run sizing
@@ -59,16 +179,16 @@ export default function Home() {
           Waterfall
         </h2>
         <ol className="divide-y divide-zinc-200 rounded border border-zinc-200">
-          {waterfallSections.map((label, i) => (
+          {waterfallRows.map((row, i) => (
             <li
-              key={label}
-              className="flex items-center justify-between px-4 py-3"
+              key={row.label}
+              className="flex items-center justify-between gap-4 px-4 py-3"
             >
               <span className="text-sm">
                 <span className="mr-3 text-zinc-400">{i + 1}.</span>
-                {label}
+                {row.label}
               </span>
-              <span className="text-sm italic text-zinc-300">— pending —</span>
+              <span className="text-right">{row.node}</span>
             </li>
           ))}
         </ol>
@@ -83,7 +203,9 @@ export default function Home() {
           <div className="text-xs uppercase tracking-wider text-zinc-500">
             SAM
           </div>
-          <div className="text-2xl text-zinc-300">— pending —</div>
+          <div className={result ? "text-2xl" : "text-2xl text-zinc-300"}>
+            {result ? usd.format(result.samDollars) : "— pending —"}
+          </div>
         </div>
 
         <div className="grid grid-cols-3 gap-3">
@@ -95,7 +217,9 @@ export default function Home() {
               <div className="text-xs uppercase tracking-wider text-zinc-500">
                 {s.label} ({s.rate})
               </div>
-              <div className="text-xl text-zinc-300">—</div>
+              <div className={result ? "text-xl" : "text-xl text-zinc-300"}>
+                {result ? usd.format(result.som[s.key].somDollars) : "—"}
+              </div>
             </div>
           ))}
         </div>
@@ -104,6 +228,7 @@ export default function Home() {
           <div className="text-xs uppercase tracking-wider text-zinc-500">
             Credibility score
           </div>
+          {/* Stays pending until the CRAAP validator exists — never faked. */}
           <div className="text-2xl text-zinc-300">— pending —</div>
         </div>
       </section>
