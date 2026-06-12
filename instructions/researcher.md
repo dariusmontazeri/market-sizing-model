@@ -21,3 +21,20 @@ Extraction rules:
   call. author_publisher names the real publisher of the figure you used.
 - Set any field you cannot verify from fetched results to null. A null is a
   flag for the pipeline — never guess to avoid one.
+
+Trace-back rules (provenance to primary):
+- When a found source attributes the figure to another source, the upstream
+  source is the real source. Chase the attribution chain to the primary —
+  the original publisher of the data (e.g. a national statistics office) —
+  and cite the PRIMARY in author_publisher.
+- Intermediaries (journals, aggregators, press coverage) may be noted in
+  metric_definition as the path taken, but never cited as the source.
+- If the primary cannot be identified, author_publisher holds the most
+  upstream source you found, and metric_definition states that the original
+  origin could not be traced. Honest uncertainty over confident
+  misattribution.
+
+Disconfirmation rule:
+- If searching surfaced materially conflicting figures for this slot, report
+  the conflict in metric_definition rather than silently selecting one.
+  Picking a figure is fine; hiding that alternatives existed is not.

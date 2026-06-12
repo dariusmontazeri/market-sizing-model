@@ -37,9 +37,13 @@ section (0-1 dimensions, locked weights, arithmetic in code). Judges from
 skeleton fields only — no web access in v1. Score and report only: no
 thresholds, no routing on the score yet. Dev UI chains researcher → validator
 and shows both raw JSONs.
-Known observations: secondary-source author attribution varied between runs
-for the same figure — the trace-back facet will resolve provenance against
-the primary (Destatis).
+Trace-back + disconfirmation rules live in instructions/researcher.md:
+attribution chains are chased to the PRIMARY publisher (cited in
+author_publisher; intermediaries noted only as path in metric_definition),
+and materially conflicting figures are reported, never silently dropped.
+Verified 3/3 runs citing Destatis; weightedTotal spread tightened from
+0.101 to 0.031. Residual: intermediary author wording still varies inside
+the path note — descriptive only, not the citation.
 Next: structural validator (isolated call), then the research loop with
 retries.
 The full spec is complete; the planning doc in Google Drive is the source of truth.
