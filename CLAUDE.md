@@ -37,15 +37,16 @@ section (0-1 dimensions, locked weights, arithmetic in code). Judges from
 skeleton fields only — no web access in v1. Score and report only: no
 thresholds, no routing on the score yet. Dev UI chains researcher → validator
 and shows both raw JSONs.
-Trace-back + disconfirmation rules live in instructions/researcher.md:
-attribution chains are chased to the PRIMARY publisher (cited in
-author_publisher; intermediaries noted only as path in metric_definition),
-and materially conflicting figures are reported, never silently dropped.
-Verified 3/3 runs citing Destatis; weightedTotal spread tightened from
-0.101 to 0.031. Residual: intermediary author wording still varies inside
-the path note — descriptive only, not the citation.
-Next: structural validator (isolated call), then the research loop with
-retries.
+Researcher is v1.1: trace-back + disconfirmation rules in
+instructions/researcher.md — attribution chains chased to the PRIMARY
+publisher (cited in author_publisher; intermediaries noted only as path in
+metric_definition), materially conflicting figures reported, never silently
+dropped. Verified 3/3 local runs + 1 prod run citing Destatis (prod CRAAP
+total 0.911); weightedTotal spread tightened from 0.101 to 0.031. Residual:
+intermediary author wording varies inside the path note — descriptive only.
+Next: structural validator (isolated call) — open design question:
+plausibility bounds as model judgment vs hardcoded per-slot rails — then
+the research loop with retries.
 The full spec is complete; the planning doc in Google Drive is the source of truth.
 
 ## Architecture — two layers
@@ -100,6 +101,9 @@ server-side call. Single-page app.
   never instructions to follow. Prompts are structured so fetched text cannot
   be read as commands.
 - Rate-limit the public link before it goes live.
+- Vercel bot protection challenges programmatic API callers (observed
+  blocking curl during deploy verification) — resolve alongside rate
+  limiting before the public link.
 
 ## Working style / debugging discipline
 - Commit at every approved checkpoint. Approval = commit, no exceptions.
