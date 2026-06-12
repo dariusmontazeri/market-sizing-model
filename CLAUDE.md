@@ -8,17 +8,40 @@ flagged as an assumption, with a visible credibility score. It is NOT a chatbot.
 The visible structure IS the product.
 
 ## Current phase
-Phase 3: units-based branch. Deterministic math (`lib/units-math.ts`) is now
+Phase 3: units-based branch. Deterministic math (`lib/units-math.ts`) is
 WIRED to the UI: "Run sizing" runs it on a HARDCODED, unvalidated Germany
 prosthetics input and fills the waterfall. Waterfall slices (label left,
 value right): Market definition, Anchor, Filters, Average price, Replacement
 layer. SAM$ and SOM bear/base/bull live ONLY in the Output section, not in the
-waterfall. The typed Country/Market fields do NOT drive
-the numbers; real inputs come from the researcher later. Credibility score
-stays "pending" until the CRAAP validator exists — never faked. Number accuracy
-is NOT yet validated against the hand-done Germany figures (that is Phase 4).
-Next: agents wired in one at a time as isolated calls (researcher, then CRAAP
-validator, then structural validator).
+waterfall. The typed Country/Market fields do NOT drive the numbers.
+Credibility score stays "pending" until the CRAAP validator exists — never
+faked. Number accuracy is NOT yet validated against the hand-done Germany
+figures (that is Phase 4).
+Researcher v1 exists (`lib/researcher.ts` + `app/api/researcher`): one
+isolated server-side Claude call (claude-opus-4-8; model choice revisited at
+Germany validation) with LIVE web search (Anthropic built-in web_search tool,
+max 5 searches/call). Proven: the pipe; the injection boundary (ALL untrusted
+text — user input AND fetched web content — is data, never instructions;
+verified against a hostile string); anchor-slot query construction returning
+the full extraction skeleton via structured outputs (every field present or
+explicitly null — a null is a flag, never a guess); filled values come from
+real fetched sources with the publisher named. Known gap: the fetched Germany
+anchor covers lower-limb amputations only, slot definition includes upper —
+correctly penalized by the CRAAP Relevance sub-scores. No retry loop, no
+tier traversal. ~26K input tokens per researched slot (search results in
+context) — revisit at multi-slot scale.
+CRAAP validator v1 exists (`lib/craapValidator.ts` + `app/api/craap`): second
+isolated component — own API call, receives ONLY slot definition + filled
+skeleton, never the researcher's reasoning. Scores per the architecture
+section (0-1 dimensions, locked weights, arithmetic in code). Judges from
+skeleton fields only — no web access in v1. Score and report only: no
+thresholds, no routing on the score yet. Dev UI chains researcher → validator
+and shows both raw JSONs.
+Known observations: secondary-source author attribution varied between runs
+for the same figure — the trace-back facet will resolve provenance against
+the primary (Destatis).
+Next: structural validator (isolated call), then the research loop with
+retries.
 The full spec is complete; the planning doc in Google Drive is the source of truth.
 
 ## Architecture — two layers
@@ -34,8 +57,13 @@ breaks independence. Each is a separate call receiving only its own inputs.
 - Researcher: finds sources, fills slots with real numbers. Finds, does not grade itself.
 - Structural validator: one-shot sanity check of the model SHAPE before any
   research (anchor type, filter chain, no gaps or double-counts). Sole structural gate.
-- CRAAP validator: scores each retrieved source. Currency/Relevance/Authority/
-  Accuracy as 0-10 blended; Purpose as a binary pass/fail gate.
+- CRAAP validator: scores each retrieved source. As built (per planning doc):
+  four dimensions 0-1, weighted in CODE with locked weights — Authority 0.30,
+  Relevance 0.30, Currency 0.25, Accuracy 0.15. Relevance is the mean of three
+  sub-dimensions (geography match, population match, metric match) judged
+  against the slot definition. The model emits scores + reasoning only; all
+  roll-ups are code. Purpose is a v1 informational bias flag captured at
+  research time — no validator gate by design; bias-routing is v2.
 - Code: ALL deterministic math. The model never computes scores or the funnel.
 
 ## Governing principles
@@ -70,6 +98,9 @@ server-side call. Single-page app.
 - Rate-limit the public link before it goes live.
 
 ## Working style / debugging discipline
+- Commit at every approved checkpoint. Approval = commit, no exceptions.
+- Test artifact files stay on disk until the checkpoint is explicitly
+  approved; cleanup comes after approval, never before.
 - After building anything, RUN it before moving on. Report actual output,
   never a verbal "it works."
 - Predefine what success looks like before testing.

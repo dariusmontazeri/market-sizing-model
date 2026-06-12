@@ -30,6 +30,36 @@ const somScenarios = [
 
 export default function Home() {
   const [result, setResult] = useState<SizingResult | null>(null);
+  const [researcherOut, setResearcherOut] = useState<string | null>(null);
+  const [craapOut, setCraapOut] = useState<string | null>(null);
+
+  // Dev-only trigger: researcher (live web search), then CRAAP validator on
+  // its skeleton. Two isolated server calls; the validator sees only
+  // slot + skeleton, never the researcher's reasoning. No Claude logic and
+  // no key ever exist client-side.
+  const runResearcherPipe = async () => {
+    setCraapOut(null);
+    setResearcherOut("…calling /api/researcher (live search, ~1 min)…");
+    try {
+      const res = await fetch("/api/researcher", { method: "POST" });
+      const researcher = await res.json();
+      setResearcherOut(JSON.stringify(researcher, null, 2));
+      if (!researcher.ok) return;
+
+      setCraapOut("…calling /api/craap…");
+      const craapRes = await fetch("/api/craap", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          slot: researcher.slot,
+          skeleton: researcher.skeleton,
+        }),
+      });
+      setCraapOut(JSON.stringify(await craapRes.json(), null, 2));
+    } catch (e) {
+      setResearcherOut(`Request failed: ${String(e)}`);
+    }
+  };
 
   const runSizing = () => {
     // All arithmetic lives in lib/units-math.ts; the UI only renders what it returns.
@@ -206,6 +236,41 @@ export default function Home() {
           </div>
           {/* Stays pending until the CRAAP validator exists — never faked. */}
           <div className="text-2xl text-zinc-300">— pending —</div>
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          Researcher (dev)
+        </h2>
+        <div className="space-y-3 rounded border border-dashed border-zinc-300 p-4">
+          <button
+            type="button"
+            onClick={runResearcherPipe}
+            className="rounded border border-zinc-400 px-4 py-2 text-sm font-medium hover:bg-zinc-100"
+          >
+            Run researcher → CRAAP
+          </button>
+          {researcherOut && (
+            <>
+              <div className="text-xs font-semibold text-zinc-500">
+                Researcher
+              </div>
+              <pre className="overflow-x-auto rounded bg-zinc-50 p-3 text-xs text-zinc-700">
+                {researcherOut}
+              </pre>
+            </>
+          )}
+          {craapOut && (
+            <>
+              <div className="text-xs font-semibold text-zinc-500">
+                CRAAP validator
+              </div>
+              <pre className="overflow-x-auto rounded bg-zinc-50 p-3 text-xs text-zinc-700">
+                {craapOut}
+              </pre>
+            </>
+          )}
         </div>
       </section>
     </main>
