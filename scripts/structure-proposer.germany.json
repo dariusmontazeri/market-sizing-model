@@ -1,0 +1,53 @@
+{
+  "ok": true,
+  "market": {
+    "country": "Germany",
+    "market": "prosthetics (prosthetic limb devices)"
+  },
+  "structure": {
+    "addressable_unit": "A functional prosthetic limb device (lower- or upper-limb prosthesis) supplied or fitted within a year in Germany to a person with major limb loss/absence who is clinically a prosthesis candidate at a qualifying mobility grade and whose device is a reimbursable item listed in the Hilfsmittelverzeichnis.",
+    "anchor_type": {
+      "type": "event_count",
+      "justification": "The market is driven by per-year device fittings and renewals (each supplied prosthesis is a billable provision event), not by a static count of people, so it descends from a count of provision-triggering events per period."
+    },
+    "distinctions": [
+      {
+        "characteristic": "Involves loss/absence of a MAJOR limb segment rather than any amputation event",
+        "why_it_narrows": "The raw anchor of all limb amputation/loss events is dominated by minor/partial (digit, partial-foot) amputations that are not fitted with a functional limb prosthesis, so only major-limb events feed this market."
+      },
+      {
+        "characteristic": "Recipient is a clinically eligible prosthesis candidate at a qualifying mobility grade",
+        "why_it_narrows": "Many major-limb amputees (frail, dysvascular, diabetic, low-mobility) are never fitted; the German mobility-class (Mobilitätsklasse/K-level) candidacy assessment gates who actually receives a device."
+      },
+      {
+        "characteristic": "Device is a reimbursable item listed in the Hilfsmittelverzeichnis under GKV coverage",
+        "why_it_narrows": "Only provision events for devices that clear the German aids-directory listing/coverage gate generate market revenue; events resulting in no reimbursable device supply fall outside the addressable unit."
+      }
+    ],
+    "filters": [
+      {
+        "label": "Major-limb-segment filter (exclude minor/digit/partial amputations not fitted with a limb prosthesis)",
+        "distinction_ref": "Involves loss/absence of a MAJOR limb segment rather than any amputation event"
+      },
+      {
+        "label": "Clinical-candidacy / mobility-grade fitment filter (keep only those assessed as prosthesis-eligible at a qualifying Mobilitätsklasse)",
+        "distinction_ref": "Recipient is a clinically eligible prosthesis candidate at a qualifying mobility grade"
+      },
+      {
+        "label": "Reimbursable-listing / GKV-coverage filter (keep only events supplying a Hilfsmittelverzeichnis-listed device)",
+        "distinction_ref": "Device is a reimbursable item listed in the Hilfsmittelverzeichnis under GKV coverage"
+      }
+    ],
+    "price_basis": {
+      "basis": "per_device",
+      "justification": "Revenue accrues per physical prosthesis supplied (and replaced), the discrete reimbursed unit, rather than per procedure or per generic unit."
+    },
+    "gap_check": "Residual gap on the addition side: a new-amputation event stream undercounts the addressable unit because annual device supply also includes replacement/renewal prostheses for the existing prosthesis-user base (devices wear out on a multi-year cycle and are re-supplied). Filtering amputation events alone never captures these renewal provision events, so the filtered figure is the 'newly fitted' subset, not total devices supplied per year; the replacement-flow component must be added separately. There is also a residual unilateral/bilateral nuance (one event can require more than one device).",
+    "double_count_check": "The three filters target nominally distinct characteristics — anatomical level (major vs minor), clinical fitment candidacy (mobility grade), and administrative reimbursability (directory listing). Overlap risk: mobility-grade candidacy and reimbursement coverage are partly entangled, since the Mobilitätsklasse assessment is itself a criterion GKV uses to approve funding — so the eligibility filter and the reimbursement filter could remove the same non-funded/non-fitted patients twice. The eligibility filter should be scoped to clinical candidacy and the reimbursement filter to device-listing status to avoid cutting the same population."
+  },
+  "model": "claude-opus-4-8",
+  "usage": {
+    "inputTokens": 30494,
+    "outputTokens": 5574
+  }
+}
