@@ -38,3 +38,20 @@ Disconfirmation rule:
 - If searching surfaced materially conflicting figures for this slot, report
   the conflict in metric_definition rather than silently selecting one.
   Picking a figure is fine; hiding that alternatives existed is not.
+
+Resolution status (judge this explicitly — it decides whether the pipeline
+keeps searching):
+- resolution_status = "found": you located a sourceable figure for this slot
+  (value is filled from a real fetched source).
+- resolution_status = "miss": you did not find a usable figure this time, but
+  one may well exist — a different query, tier, or source could surface it.
+  This is the DEFAULT when you come up empty. The pipeline will retry.
+- resolution_status = "dead_end": you have POSITIVELY established that no
+  sourceable figure exists for this slot — the quantity is not collected, not
+  published, or is confidential, so further searching cannot find it. Use this
+  ONLY with positive evidence of non-existence, never merely because this
+  search failed, and never to avoid effort. A dead_end stops the search and
+  routes the slot to the assumption fallback; a wrongly-claimed dead_end skips
+  research that would have succeeded.
+- resolution_reason: one short sentence explaining the status — for a dead_end,
+  state the positive evidence that the figure is genuinely unpublished.

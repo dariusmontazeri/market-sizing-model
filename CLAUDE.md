@@ -37,9 +37,10 @@ CRAAP validator v1 exists (`lib/craapValidator.ts` + `app/api/craap`): second
 isolated component — own API call, receives ONLY slot definition + filled
 skeleton, never the researcher's reasoning. Scores per the architecture
 section (0-1 dimensions, locked weights, arithmetic in code). Judges from
-skeleton fields only — no web access in v1. Score and report only: no
-thresholds, no routing on the score yet. Dev UI chains researcher -> validator
-and shows both raw JSONs.
+skeleton fields only — no web access. Now also emits a Purpose GATE
+(fit-for-objective-sizing pass/fail) beyond the four scored dimensions;
+CRAAP_THRESHOLD = 0.7 lives here but is applied by the research loop — CRAAP
+itself still only scores, never routes.
 
 Structure proposer v1 EXISTS (`lib/structureProposer.ts` +
 `app/api/structure-proposer`, instructions in instructions/structureProposer.md).
@@ -60,7 +61,42 @@ re-derived the major-vs-minor / fitment / mobility-grade distinctions
 (Mobilitätsklasse tell present), substantive gap_check (catches the
 replacement/renewal undercount) and double_count_check. A reference fixture
 from a passing run is committed at scripts/structure-proposer.germany.json.
-NOT yet wired into the researcher or the waterfall.
+NOT yet wired live into the researcher or the waterfall (components are tested
+against the saved fixture, not chained live).
+
+Structural validator EXISTS (`lib/structuralValidator.ts` + instructions/
+structural.md + `app/api/structural-validator`): the sole pre-research SHAPE
+GATE. Stage 1 = deterministic code checks (anchor/price kind valid, every
+filter's distinction_ref resolves, no repeated ref, required fields + unique
+labels; an out-of-range filter count is flagged, not failed) and short-circuits
+before any model call. Stage 2 = one isolated Opus call, no web search, six
+pass/fail verdicts (anchor_appropriate, gap_check_grade, semantic_double_count,
+distinctions_genuine, price_basis_match, and filter_narrows_demand — a filter
+must cut real demand, not gate a supply-side execution step). Code rolls up the
+overall verdict; a fail bounces the structure back to the proposer. On the
+Germany fixture the Hilfsmittel reimbursable-listing filter correctly fails
+filter_narrows_demand while the other five pass.
+
+Researcher REWIRED to consume a validated structure (`deriveResearchSlots` +
+`researchValidatedStructure`): turns a structure into ordered slots in code
+(anchor -> each filter rate -> price) and resolves each via its own isolated
+call, sequentially. Anchor is atomic for v1 (composed/derived-precision anchor
+deferred).
+
+Research loop (`lib/researchLoop.ts`, `resolveSlotWithRetry`) — Slices 1 & 2
+SHIPPED + pushed (latest 762ab9e):
+- Slice 1: CRAAP-driven retry + tier descent (attempt N targets tier N, 3
+  attempts) + keep-best across attempts; all arithmetic and routing in code.
+- Slice 2: web_search spacing (~2s) + exponential backoff (2/4/8) that
+  distinguishes a rate-limit BLOCK (retry the SAME tier; exhausted -> a
+  rate_limited halt, no invented value) from a CRAAP FAILURE (descend a tier).
+  A deterministic offline test proves all three classes at zero API cost.
+- Early-stop-on-dead-end: IN PROGRESS. Researcher contract DONE
+  (resolution_status found|miss|dead_end + resolution_reason in the skeleton
+  schema + strengthened guard; instruction says use dead_end only with positive
+  evidence of non-existence). The loop handler (stop + route to the
+  assumption-fallback seam), its deterministic test, and the slice commit are
+  TODO next session. The assumption fallback itself is a later slice (not built).
 
 KNOWN ISSUES (recorded, deliberately deferred):
 - Structure proposer intermittently returns an empty final turn (~1/3 of runs),
@@ -85,9 +121,11 @@ KNOWN ISSUES (recorded, deliberately deferred):
   Belongs with the research-loop/continuation reliability work alongside the
   proposer fix; do NOT treat as a one-off. Deferred.
 
-After the proposer: the structural validator (the pre-research shape gate,
-below), then rewire the researcher to consume a validated structure instead
-of the hardcoded slot, then the research loop with retries.
+Next: finish the early-stop-on-dead-end slice (loop handler + test), then the
+assumption fallback (Slice 3), then wire the components live end-to-end
+(proposer -> structural validator -> research loop -> waterfall) and validate
+the numbers against the hand-done Germany figures (Phase 4). The proposer
+empty-turn / researcher-garble continuation issues (below) gate the live wiring.
 
 The full spec is the Google Drive planning doc (now at V6) — source of truth.
 

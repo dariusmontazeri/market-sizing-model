@@ -40,6 +40,8 @@ const nullSkeleton = (): ResearchSkeleton => ({
   geography: null,
   population_segment: null,
   metric_definition: "search blocked by rate limit",
+  resolution_status: "miss",
+  resolution_reason: "no source obtained this attempt",
 });
 
 const goodSkeleton = (): ResearchSkeleton => ({
@@ -52,6 +54,8 @@ const goodSkeleton = (): ResearchSkeleton => ({
   geography: "Germany",
   population_segment: "all",
   metric_definition: "fake",
+  resolution_status: "found",
+  resolution_reason: "sourced figure located",
 });
 
 // A blocked search: rate-limit code present AND no source obtained.

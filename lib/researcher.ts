@@ -66,6 +66,21 @@ const GERMANY_PROSTHETICS_ANCHOR_SLOT = {
     "Major (above-ankle or above-wrist) limb amputations performed per year in Germany — the entry population for prosthetic device candidacy.",
 } as const;
 
+// The researcher's explicit verdict on whether a figure is obtainable. This is
+// a MODEL judgment (Principle 5) — only the component reading the pages can tell
+// "genuinely unpublished" from "I searched badly". Code must never infer it from
+// null/empty patterns.
+//   found    — a sourceable figure was located (value filled from a real source)
+//   miss     — none found THIS attempt, but one may exist; retrying is sensible
+//   dead_end — positively established that NO sourceable figure exists for this
+//              slot (not collected / not published / confidential) → stop looking
+export type ResolutionStatus = "found" | "miss" | "dead_end";
+export const RESOLUTION_STATUSES: readonly ResolutionStatus[] = [
+  "found",
+  "miss",
+  "dead_end",
+];
+
 export type AnchorSkeleton = {
   search_query: string;
   value: number | null;
@@ -78,6 +93,9 @@ export type AnchorSkeleton = {
   geography: string | null;
   population_segment: string | null;
   metric_definition: string | null;
+  // Researcher's resolution verdict (see ResolutionStatus) + a one-line reason.
+  resolution_status: ResolutionStatus;
+  resolution_reason: string;
 };
 
 // The extraction skeleton is slot-agnostic: an anchor figure, a filter rate,
@@ -96,6 +114,8 @@ const SKELETON_KEYS: readonly (keyof AnchorSkeleton)[] = [
   "geography",
   "population_segment",
   "metric_definition",
+  "resolution_status",
+  "resolution_reason",
 ];
 
 // Structured-outputs schema: every field required; "unknown" is an explicit
@@ -124,6 +144,17 @@ const ANCHOR_SKELETON_SCHEMA = {
     geography: { anyOf: [{ type: "string" }, { type: "null" }] },
     population_segment: { anyOf: [{ type: "string" }, { type: "null" }] },
     metric_definition: { anyOf: [{ type: "string" }, { type: "null" }] },
+    resolution_status: {
+      type: "string",
+      enum: [...RESOLUTION_STATUSES],
+      description:
+        "Your verdict: 'found' (a sourceable figure located), 'miss' (none this time, may exist), or 'dead_end' (positively established no sourceable figure exists). Use dead_end ONLY with positive evidence of non-existence.",
+    },
+    resolution_reason: {
+      type: "string",
+      description:
+        "One short sentence explaining the resolution_status (especially why a dead_end figure is genuinely unpublished).",
+    },
   },
 } as const;
 
@@ -133,7 +164,14 @@ const ANCHOR_SYSTEM_PROMPT = loadInstruction("researcher.md");
 
 export function isAnchorSkeleton(value: unknown): value is AnchorSkeleton {
   if (typeof value !== "object" || value === null) return false;
-  return SKELETON_KEYS.every((key) => key in value);
+  if (!SKELETON_KEYS.every((key) => key in value)) return false;
+  // The loop branches on resolution_status, so verify it (and its reason) —
+  // an out-of-enum value must not be mistaken for, or hide, a dead_end.
+  const v = value as Record<string, unknown>;
+  return (
+    RESOLUTION_STATUSES.includes(v.resolution_status as ResolutionStatus) &&
+    typeof v.resolution_reason === "string"
+  );
 }
 
 export type AnchorResearchResult = {
