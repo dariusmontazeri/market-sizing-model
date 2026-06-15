@@ -148,7 +148,36 @@ type ResearcherCallResult = {
   skeleton: ResearchSkeleton;
   model: string;
   usage: { inputTokens: number; outputTokens: number };
+  // All web_search tool error codes seen in this call (diagnostic).
+  searchErrorCodes: string[];
+  // A transient web_search rate-limit/unavailability was hit (the SEARCH was
+  // blocked — this is NOT a source-quality signal). The caller decides whether
+  // that means "no source obtained" (see searchSlotWithBackoff).
+  rateLimitBlocked: boolean;
 };
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// web_search error codes that mean the SEARCH was transiently blocked (the
+// source was never evaluated), so the right response is wait-and-retry the SAME
+// search — never a tier descent. Other codes (e.g. query_too_long) are real
+// search problems and flow through to CRAAP as before.
+const SEARCH_RATELIMIT_CODES = ["too_many_requests", "unavailable"] as const;
+
+// Scan the model's content (across all turns of one call) for web_search tool
+// results that came back as errors, returning their codes.
+function collectSearchErrorCodes(content: Anthropic.ContentBlock[]): string[] {
+  const codes: string[] = [];
+  for (const block of content) {
+    if (block.type === "web_search_tool_result") {
+      const c = block.content;
+      if (!Array.isArray(c) && c.type === "web_search_tool_result_error") {
+        codes.push(c.error_code);
+      }
+    }
+  }
+  return codes;
+}
 
 // One isolated researcher call. Takes the fully-built user message and runs the
 // web-search + structured-output extraction for a single slot. Shared by the
@@ -188,20 +217,29 @@ async function runResearcherCall(
   const usage = { inputTokens: 0, outputTokens: 0 };
   usage.inputTokens += response.usage.input_tokens;
   usage.outputTokens += response.usage.output_tokens;
+  // Web-search errors can appear in any turn (the turn where the search ran),
+  // not just the final one, so accumulate content across all turns to scan.
+  const allContent: Anthropic.ContentBlock[] = [...response.content];
 
   // Server-side tools can pause the turn at the API's iteration limit;
   // re-send with the assistant turn appended and the server resumes. Bounded
   // so a stuck turn cannot loop forever. This is turn plumbing, NOT a research
   // retry loop — a slot that resolves to nulls is not re-attempted here (the
-  // retry/keep-best/fallback loop is a later slice).
+  // CRAAP-driven retry/tier-descent loop is researchLoop.ts).
   let continuations = 0;
   while (response.stop_reason === "pause_turn" && continuations < 5) {
     messages = [...messages, { role: "assistant", content: response.content }];
     response = await callModel();
     usage.inputTokens += response.usage.input_tokens;
     usage.outputTokens += response.usage.output_tokens;
+    allContent.push(...response.content);
     continuations++;
   }
+
+  const searchErrorCodes = collectSearchErrorCodes(allContent);
+  const rateLimitBlocked = searchErrorCodes.some((code) =>
+    (SEARCH_RATELIMIT_CODES as readonly string[]).includes(code),
+  );
 
   const text = response.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
@@ -216,7 +254,13 @@ async function runResearcherCall(
     throw new Error(`Researcher returned JSON missing skeleton fields: ${text}`);
   }
 
-  return { skeleton: parsed, model: response.model, usage };
+  return {
+    skeleton: parsed,
+    model: response.model,
+    usage,
+    searchErrorCodes,
+    rateLimitBlocked,
+  };
 }
 
 export async function researchAnchorSlot(): Promise<AnchorResearchResult> {
@@ -370,6 +414,111 @@ export async function researchSlot(
       `Slot kind: ${slot.kind}\nGeography: ${slot.geography}\nMetric: ${slot.metric}\nSlot definition: ${slot.definition}`,
     );
   return runResearcherCall(userContent);
+}
+
+// ---------------------------------------------------------------------------
+// Spacing + backoff around a single tier's search (Research loop, Slice 2).
+//
+// The burst of back-to-back searches is what trips the web_search rate cap, so:
+//  - SPACING: a fixed pause before EVERY search (the first try and every retry).
+//  - BACKOFF: when a search comes back rate-limit-BLOCKED (the search never ran,
+//    no source was evaluated), wait exponentially (2s, 4s, 8s) and retry the
+//    SAME search at the SAME tier. A block is NOT a source-quality failure, so
+//    it must never descend a tier or count as a CRAAP attempt.
+// If the backoff budget is exhausted while still blocked, the search is reported
+// as unavailable due to rate limit — distinct from a CRAAP failure.
+
+const SEARCH_SPACING_MS = 2000;
+const SEARCH_BACKOFF_MS = [2000, 4000, 8000] as const; // up to 3 backoff retries
+
+// A "block" = a transient rate limit AND no usable source came back. If the
+// model still extracted a source despite a partial rate-limit hit, that is a
+// real result for CRAAP to judge, not a block to discard.
+function skeletonHasSource(s: ResearchSkeleton): boolean {
+  return (
+    s.value !== null ||
+    (typeof s.author_publisher === "string" && s.author_publisher.trim() !== "") ||
+    (typeof s.source_url === "string" && s.source_url.trim() !== "")
+  );
+}
+
+// Transient throttling at the API level (429 rate limit, 529 overloaded, or any
+// 5xx) — treat like a search block: back off and retry the same search.
+function isTransientApiError(err: unknown): boolean {
+  return (
+    err instanceof Anthropic.APIError &&
+    typeof err.status === "number" &&
+    (err.status === 429 || err.status >= 500)
+  );
+}
+
+export type SearchOutcome =
+  | {
+      status: "searched";
+      result: ResearcherCallResult;
+      searchCalls: number;
+      blockCodes: string[];
+      usage: { inputTokens: number; outputTokens: number };
+    }
+  | {
+      status: "rate_limited";
+      searchCalls: number;
+      blockCodes: string[];
+      usage: { inputTokens: number; outputTokens: number };
+      lastResult: ResearcherCallResult | null;
+    };
+
+// The single isolated search call, injectable so tests can simulate rate-limit
+// blocks/recoveries with zero API calls. Defaults to the real researcher.
+export type SearchFn = (
+  slot: ResearchSlot,
+  opts?: { tier?: TierTarget; attempt?: number; avoidPublishers?: string[] },
+) => Promise<ResearcherCallResult>;
+
+export async function searchSlotWithBackoff(
+  slot: ResearchSlot,
+  opts?: { tier?: TierTarget; attempt?: number; avoidPublishers?: string[] },
+  searchFn: SearchFn = researchSlot,
+): Promise<SearchOutcome> {
+  const blockCodes: string[] = [];
+  const usage = { inputTokens: 0, outputTokens: 0 };
+  let searchCalls = 0;
+  let lastResult: ResearcherCallResult | null = null;
+
+  for (let i = 0; i <= SEARCH_BACKOFF_MS.length; i++) {
+    // Spacing before the first search; exponential backoff before any retry.
+    await sleep(i === 0 ? SEARCH_SPACING_MS : SEARCH_BACKOFF_MS[i - 1]);
+
+    let result: ResearcherCallResult;
+    try {
+      result = await searchFn(slot, opts);
+    } catch (err) {
+      searchCalls++;
+      if (isTransientApiError(err)) {
+        // API-level throttle: the request itself was rejected — treat as a
+        // block and back off, same as a tool-result rate-limit error.
+        const status =
+          err instanceof Anthropic.APIError ? err.status : "unknown";
+        blockCodes.push(`api_${status}`);
+        continue;
+      }
+      throw err; // a real error (parse failure, missing key, etc.) — surface it
+    }
+
+    searchCalls++;
+    usage.inputTokens += result.usage.inputTokens;
+    usage.outputTokens += result.usage.outputTokens;
+    blockCodes.push(...result.searchErrorCodes);
+    lastResult = result;
+
+    const blocked = result.rateLimitBlocked && !skeletonHasSource(result.skeleton);
+    if (!blocked) {
+      return { status: "searched", result, searchCalls, blockCodes, usage };
+    }
+    // Blocked: loop continues -> backoff and retry the same search.
+  }
+
+  return { status: "rate_limited", searchCalls, blockCodes, usage, lastResult };
 }
 
 export type SlotResolution = {

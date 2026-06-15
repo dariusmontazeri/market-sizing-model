@@ -75,6 +75,15 @@ KNOWN ISSUES (recorded, deliberately deferred):
   that each filter's distinction_ref matches a listed distinction, or label
   uniqueness. Real but not urgent — the structural validator will catch
   incoherent structures downstream. Deferred.
+- Researcher intermittently returns a MALFORMED skeleton — a garbled
+  structured-output JSON (observed in a Germany price-slot run: value 21,
+  units ",", corrupted date ".Ers c RanA...", broken ".t://" URL). Same class
+  as the proposer empty-turn issue: the call likely hit its max_tokens ceiling
+  mid-JSON or a transient structured-output failure. It fails safe here — the
+  skeleton still schema-validates and CRAAP correctly rejected it (authority
+  0.08, purpose fail), so the pipeline stayed robust — but the data is junk.
+  Belongs with the research-loop/continuation reliability work alongside the
+  proposer fix; do NOT treat as a one-off. Deferred.
 
 After the proposer: the structural validator (the pre-research shape gate,
 below), then rewire the researcher to consume a validated structure instead

@@ -1,8 +1,11 @@
-// Checkpoint runner for the research loop (Slice 1: retry + tier descent,
-// CRAAP-driven). Reads the SAVED validated Germany structure, derives the slots,
-// and runs the loop on the PRICE slot specifically — the slot that last pulled a
-// low-authority aggregator (Bookimed), so it exercises CRAAP-driven retry,
-// tier descent, keep-best, and (likely) the all-fail / failed-threshold path.
+// Checkpoint runner for the research loop. Reads the SAVED validated Germany
+// structure, derives the slots, and runs the loop on the PRICE slot — the slot
+// that hit the web_search rate cap in the prior runs.
+//
+// Slice 2 focus: show that a rate-limit BLOCK is handled differently from a
+// CRAAP FAILURE. The output separates SEARCH ROUNDS (which may back off and
+// retry the same tier, or end rate_limited) from CRAAP EVALUATIONS (real
+// source-quality verdicts that descend a tier on failure).
 //
 // NOT wired live to the proposer or structural validator.
 //
@@ -48,30 +51,48 @@ async function main() {
   console.log(
     `Loop on PRICE slot for ${market.market} (${market.country})\n` +
       `metric: ${priceSlot.metric}\n` +
-      `threshold: ${0.7} (blend) AND Purpose gate must pass\n`,
+      `accept = Purpose gate pass AND blend >= 0.7\n`,
   );
 
   const result = await resolveSlotWithRetry(priceSlot);
 
+  // 1) Search rounds — the rate-limit-vs-CRAAP distinction lives here.
+  console.log("--- SEARCH ROUNDS (per tier) ---");
+  for (const r of result.searchRounds) {
+    const blocks =
+      r.blockCodes.length > 0 ? r.blockCodes.join(", ") : "(none)";
+    const note =
+      r.status === "rate_limited"
+        ? "RATE-LIMIT BLOCK — backoff exhausted, NOT handed to CRAAP, NOT a tier descent"
+        : r.searchCalls > 1
+          ? `recovered after backoff (${r.searchCalls} search calls) — then handed to CRAAP`
+          : "searched cleanly (1 call) — handed to CRAAP";
+    console.log(
+      `  Round ${r.attempt} (Tier ${r.tier}): status=${r.status} | searchCalls=${r.searchCalls} | blockCodes=[${blocks}]\n    -> ${note}`,
+    );
+  }
+
+  // 2) CRAAP evaluations — real source-quality verdicts (these descend tiers).
+  console.log("\n--- CRAAP EVALUATIONS (source-quality verdicts) ---");
+  if (result.attempts.length === 0) {
+    console.log("  (none — no search produced a source to evaluate)");
+  }
   for (const a of result.attempts) {
     const s = a.skeleton;
     const d = a.craap.dimensions;
-    console.log(`=== Attempt ${a.attempt} (target Tier ${a.tier}) ===`);
-    console.log(`  source:        ${short(s.author_publisher)}`);
-    console.log(`  source_url:    ${short(s.source_url)}`);
-    console.log(`  value:         ${short(s.value)}  units: ${short(s.units)}  date: ${short(s.date)}`);
-    console.log(`  CRAAP authority: ${d.authority.score}  | currency: ${d.currency.score}  | accuracy: ${d.accuracy.score}`);
-    console.log(
-      `  CRAAP relevance: ${a.craap.relevanceScore} (geo ${d.relevance.geography_match.score} / pop ${d.relevance.population_match.score} / metric ${d.relevance.metric_match.score})`,
-    );
-    console.log(`  Purpose gate:  ${a.craap.purpose.gate}`);
-    console.log(`  blended score: ${a.blendedScore}  (threshold ${result.threshold})`);
-    console.log(`  -> attempt passed: ${a.passed}\n`);
+    console.log(`  Attempt ${a.attempt} (Tier ${a.tier}):`);
+    console.log(`    source:        ${short(s.author_publisher)}`);
+    console.log(`    source_url:    ${short(s.source_url)}`);
+    console.log(`    value:         ${short(s.value)}  units: ${short(s.units)}  date: ${short(s.date)}`);
+    console.log(`    CRAAP authority ${d.authority.score} | currency ${d.currency.score} | accuracy ${d.accuracy.score} | relevance ${a.craap.relevanceScore}`);
+    console.log(`    Purpose gate:  ${a.craap.purpose.gate}`);
+    console.log(`    blended:       ${a.blendedScore} (threshold ${result.threshold}) -> passed: ${a.passed}`);
   }
 
   console.log(
-    `WINNER: attempt ${result.winnerAttempt}  | resolved (passed CRAAP): ${result.resolved}  | failedThreshold: ${result.failedThreshold}`,
+    `\nOUTCOME: ${result.outcome}  | resolved: ${result.resolved} | failedThreshold: ${result.failedThreshold} | rateLimited: ${result.rateLimited}`,
   );
+  console.log(`winnerAttempt: ${short(result.winnerAttempt)}`);
   console.log(
     `Total usage: ${result.totalUsage.inputTokens} in / ${result.totalUsage.outputTokens} out tokens`,
   );
