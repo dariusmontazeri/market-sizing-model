@@ -24,7 +24,16 @@ export const CRAAP_WEIGHTS = {
   accuracy: 0.15,
 } as const;
 
+// Pass threshold for the weighted blend (0–1 scale; "~7/10"). A source must
+// clear this AND pass the Purpose gate to be accepted by the research loop.
+export const CRAAP_THRESHOLD = 0.7;
+
 type DimensionScore = { score: number; reasoning: string };
+
+// Purpose is a GATE, not a weighted dimension: a fail disqualifies the source
+// regardless of the blend (e.g. a promotional/lead-gen figure produced to sell,
+// not to measure). The model emits it; code acts on it.
+export type PurposeGate = { gate: "pass" | "fail"; reasoning: string };
 
 // Shape the model must return. Relevance is graded on three sub-dimensions —
 // the shared vocabulary: geography match, population match, metric match.
@@ -37,6 +46,8 @@ type CraapModelOutput = {
     population_match: DimensionScore;
     metric_match: DimensionScore;
   };
+  // Gate, not part of the weighted blend.
+  purpose: PurposeGate;
 };
 
 const DIMENSION_SCHEMA = {
@@ -55,10 +66,28 @@ const DIMENSION_SCHEMA = {
   },
 } as const;
 
+const PURPOSE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["gate", "reasoning"],
+  properties: {
+    gate: {
+      type: "string",
+      enum: ["pass", "fail"],
+      description:
+        "pass = the source's purpose is fit for objective market sizing; fail = promotional/sales/lead-generation, i.e. a figure produced to sell rather than to measure.",
+    },
+    reasoning: {
+      type: "string",
+      description: "Brief reasoning, one to three sentences.",
+    },
+  },
+} as const;
+
 const CRAAP_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["authority", "currency", "accuracy", "relevance"],
+  required: ["authority", "currency", "accuracy", "relevance", "purpose"],
   properties: {
     authority: DIMENSION_SCHEMA,
     currency: DIMENSION_SCHEMA,
@@ -73,6 +102,7 @@ const CRAAP_SCHEMA = {
         metric_match: DIMENSION_SCHEMA,
       },
     },
+    purpose: PURPOSE_SCHEMA,
   },
 } as const;
 
@@ -93,6 +123,17 @@ function isDimensionScore(value: unknown): value is DimensionScore {
   );
 }
 
+function isPurposeGate(value: unknown): value is PurposeGate {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "gate" in value &&
+    (value.gate === "pass" || value.gate === "fail") &&
+    "reasoning" in value &&
+    typeof value.reasoning === "string"
+  );
+}
+
 function isCraapModelOutput(value: unknown): value is CraapModelOutput {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
@@ -103,6 +144,7 @@ function isCraapModelOutput(value: unknown): value is CraapModelOutput {
   ) {
     return false;
   }
+  if (!isPurposeGate(v.purpose)) return false;
   const rel = v.relevance;
   if (typeof rel !== "object" || rel === null) return false;
   const r = rel as Record<string, unknown>;
@@ -122,6 +164,9 @@ export type CraapValidationResult = {
   relevanceScore: number; // mean of the three sub-dimension scores
   weights: typeof CRAAP_WEIGHTS;
   weightedTotal: number;
+  // The Purpose gate, surfaced for the loop's accept/retry decision (the gate is
+  // emitted by the model but it is NOT folded into weightedTotal).
+  purpose: PurposeGate;
   model: string;
   usage: { inputTokens: number; outputTokens: number };
 };
@@ -138,7 +183,9 @@ export async function validateSkeleton(
 
   const response = await client.messages.create({
     model: "claude-opus-4-8",
-    max_tokens: 2048,
+    // Adaptive thinking + four scored dimensions + the Purpose gate; 4096 keeps
+    // headroom so the turn doesn't end on max_tokens before the final JSON.
+    max_tokens: 4096,
     thinking: { type: "adaptive" },
     system: CRAAP_SYSTEM_PROMPT,
     output_config: {
@@ -182,6 +229,7 @@ export async function validateSkeleton(
     relevanceScore: round3(relevanceScore),
     weights: CRAAP_WEIGHTS,
     weightedTotal: round3(weightedTotal),
+    purpose: parsed.purpose,
     model: response.model,
     usage: {
       inputTokens: response.usage.input_tokens,

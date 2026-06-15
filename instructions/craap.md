@@ -12,4 +12,7 @@ Score each dimension from 0 to 1 with brief reasoning:
   - population_match: does the population/segment measured match the population the slot intends?
   - metric_match: does the metric actually measured match the slot's metric definition, including qualifying terms?
 
-Do not compute any totals or averages. Emit only the dimension scores and reasoning.
+Then run the Purpose gate (a pass/fail judgment, NOT a 0-to-1 score):
+- purpose: judge whether the source's PURPOSE is fit for objective market sizing. Gate "pass" if the figure was produced for an objective, analytical purpose (official statistics, research, neutral reporting, regulatory filings). Gate "fail" if the source's purpose is promotional, sales, advertising, or lead-generation — a number produced to sell something (for example a clinic or medical-travel aggregator quoting prices to attract patients), where the figure is marketing rather than measurement. A failed Purpose means the figure is unreliable regardless of the other scores.
+
+Do not compute any totals or averages. Emit only the four dimension scores, the Purpose gate, and their reasoning.

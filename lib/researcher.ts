@@ -72,6 +72,9 @@ export type AnchorSkeleton = {
   units: string | null;
   date: string | null;
   author_publisher: string | null;
+  // URL of the source the figure came from — part of the source package handed
+  // to CRAAP (helps authority/trace-back). Null if not available.
+  source_url: string | null;
   geography: string | null;
   population_segment: string | null;
   metric_definition: string | null;
@@ -89,6 +92,7 @@ const SKELETON_KEYS: readonly (keyof AnchorSkeleton)[] = [
   "units",
   "date",
   "author_publisher",
+  "source_url",
   "geography",
   "population_segment",
   "metric_definition",
@@ -113,6 +117,10 @@ const ANCHOR_SKELETON_SCHEMA = {
       description: "Date or period the figure refers to, if known.",
     },
     author_publisher: { anyOf: [{ type: "string" }, { type: "null" }] },
+    source_url: {
+      anyOf: [{ type: "string" }, { type: "null" }],
+      description: "URL of the source the figure came from, if available.",
+    },
     geography: { anyOf: [{ type: "string" }, { type: "null" }] },
     population_segment: { anyOf: [{ type: "string" }, { type: "null" }] },
     metric_definition: { anyOf: [{ type: "string" }, { type: "null" }] },
@@ -317,15 +325,47 @@ export function deriveResearchSlots(
   return slots;
 }
 
+// Source-quality tiers for tier descent. Lightweight descriptors, not a source
+// whitelist — the full tier list (shared with CRAAP's Authority rubric) is a
+// separate prep task and is deferred.
+export type TierTarget = 1 | 2 | 3;
+
+const TIER_DIRECTIVE: Record<TierTarget, string> = {
+  1: "Tier 1 — official statistics offices and government agencies, peer-reviewed literature, and the primary publisher of the figure.",
+  2: "Tier 2 — established market-research / industry reports, professional and trade bodies, and reputable secondary sources.",
+  3: "Tier 3 — any credible published source, including reputable press. Avoid promotional, sales, or lead-generation pages where a credible alternative exists.",
+};
+
 // Resolve ONE slot via an isolated researcher call. The slot is derived from the
 // proposer's output (which carries user-typed and web-influenced text), so it
 // enters the prompt as untrusted DATA through the existing wrapUntrusted
 // boundary — the instruction stays outside the block, exactly as the proposer
 // does it. The researcher's injection posture is unchanged.
-async function researchSlot(slot: ResearchSlot): Promise<ResearcherCallResult> {
+//
+// The tier directive and the avoid-list are CODE-orchestrated (trusted), so they
+// sit OUTSIDE the untrusted block alongside the task instruction.
+export async function researchSlot(
+  slot: ResearchSlot,
+  opts?: { tier?: TierTarget; attempt?: number; avoidPublishers?: string[] },
+): Promise<ResearcherCallResult> {
+  const lines = [
+    "Fill the extraction skeleton for the research slot described in the data block.",
+    "Build your search query per the rules and extract exactly one sourced figure for this slot.",
+  ];
+  if (opts?.tier) {
+    const attemptNote = opts.attempt ? ` (attempt ${opts.attempt} of 3)` : "";
+    lines.push(
+      `Source-quality target for this attempt${attemptNote}: ${TIER_DIRECTIVE[opts.tier]} Prefer the most authoritative source available at this tier.`,
+    );
+  }
+  if (opts?.avoidPublishers && opts.avoidPublishers.length > 0) {
+    lines.push(
+      `Do NOT reuse these already-rejected sources — find a different, more suitable one: ${opts.avoidPublishers.join("; ")}.`,
+    );
+  }
   const userContent =
-    `Fill the extraction skeleton for the research slot described in the data block. ` +
-    `Build your search query per the rules and extract exactly one sourced figure for this slot.\n` +
+    lines.join("\n") +
+    "\n" +
     wrapUntrusted(
       `Slot kind: ${slot.kind}\nGeography: ${slot.geography}\nMetric: ${slot.metric}\nSlot definition: ${slot.definition}`,
     );
