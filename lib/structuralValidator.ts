@@ -186,14 +186,24 @@ export type Stage2Checks = {
   semantic_double_count: CheckVerdict;
   distinctions_genuine: CheckVerdict;
   price_basis_match: CheckVerdict;
+  // Demand-cut vs execution-step: a filter must narrow real addressable demand
+  // (a property of the buyer/patient/unit), not gate a supply-side execution
+  // step (a procedural/transactional hurdle a provider clears to capture
+  // demand). A distinct error class from gap/double-count — a filter that
+  // should not exist at all.
+  filter_narrows_demand: CheckVerdict;
 };
 
+// The schema, the output guard, and the code-side pass/fail roll-up all derive
+// from this list — adding an id here propagates the new check everywhere,
+// including making a fail in it fail Stage 2 (and thus the gate) overall.
 const STAGE2_CHECK_IDS = [
   "anchor_appropriate",
   "gap_check_grade",
   "semantic_double_count",
   "distinctions_genuine",
   "price_basis_match",
+  "filter_narrows_demand",
 ] as const;
 
 export type Stage2Result = { passed: boolean; checks: Stage2Checks };
@@ -303,7 +313,9 @@ export async function validateStructure(
 
   const response = await client.messages.create({
     model: "claude-opus-4-8",
-    max_tokens: 2048,
+    // Adaptive thinking + six per-check verdicts; 2048 (sized for five checks)
+    // overflowed and ended the turn on max_tokens before the final JSON.
+    max_tokens: 4096,
     thinking: { type: "adaptive" },
     system: STRUCTURAL_SYSTEM_PROMPT,
     // No tools: the shape gate reasons only from the surfaced structure and its
