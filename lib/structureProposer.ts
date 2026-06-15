@@ -39,12 +39,15 @@ export type ProposedStructure = {
   double_count_check: string;
 };
 
-const ANCHOR_TYPES: readonly AnchorType[] = [
+// Exported so the structural validator's Stage-1 mechanical check reuses the
+// canonical valid-kind lists — one source of truth, no drift between the
+// component that proposes an anchor/price kind and the gate that validates it.
+export const ANCHOR_TYPES: readonly AnchorType[] = [
   "population",
   "event_count",
   "installed_base",
 ];
-const PRICE_BASES: readonly PriceBasis[] = [
+export const PRICE_BASES: readonly PriceBasis[] = [
   "per_device",
   "per_procedure",
   "per_unit_sold",

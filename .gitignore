@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local scratch: extracted planning-doc text (source of truth lives in Drive)
+.planning-doc.txt
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
