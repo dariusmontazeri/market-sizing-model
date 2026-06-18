@@ -91,12 +91,20 @@ SHIPPED + pushed (latest 762ab9e):
   distinguishes a rate-limit BLOCK (retry the SAME tier; exhausted -> a
   rate_limited halt, no invented value) from a CRAAP FAILURE (descend a tier).
   A deterministic offline test proves all three classes at zero API cost.
-- Early-stop-on-dead-end: IN PROGRESS. Researcher contract DONE
-  (resolution_status found|miss|dead_end + resolution_reason in the skeleton
-  schema + strengthened guard; instruction says use dead_end only with positive
-  evidence of non-existence). The loop handler (stop + route to the
-  assumption-fallback seam), its deterministic test, and the slice commit are
-  TODO next session. The assumption fallback itself is a later slice (not built).
+- Early-stop-on-dead-end: SHIPPED. Researcher contract (resolution_status
+  found|miss|dead_end + resolution_reason in the skeleton schema + strengthened
+  guard; instruction uses dead_end only with positive evidence of non-existence)
+  AND the loop handler: a third failure class, distinct from blocked-search and
+  CRAAP-fail. On resolution_status === "dead_end" the loop STOPS before CRAAP (a
+  dead end has no source to score), does NOT descend a tier, consumes no further
+  attempts, and routes the slot to a typed assumption-fallback SEAM
+  (enterAssumptionFallback -> AssumptionFallbackEntry, value always null). The
+  dead end is read ONLY from the typed field — code never infers it from
+  null/empty/miss (a miss still flows to CRAAP + descent). Deterministic offline
+  test (scripts/test-research-loop-deadend.ts) proves all three classes route
+  correctly, incl. dead_end consuming no further attempts and emitting no number
+  even when the skeleton adversarially carries a value. The assumption fallback
+  BODY itself (Slice 3) is still TODO (not built — the seam returns no value).
 
 KNOWN ISSUES (recorded, deliberately deferred):
 - Structure proposer intermittently returns an empty final turn (~1/3 of runs),
@@ -121,11 +129,12 @@ KNOWN ISSUES (recorded, deliberately deferred):
   Belongs with the research-loop/continuation reliability work alongside the
   proposer fix; do NOT treat as a one-off. Deferred.
 
-Next: finish the early-stop-on-dead-end slice (loop handler + test), then the
-assumption fallback (Slice 3), then wire the components live end-to-end
-(proposer -> structural validator -> research loop -> waterfall) and validate
-the numbers against the hand-done Germany figures (Phase 4). The proposer
-empty-turn / researcher-garble continuation issues (below) gate the live wiring.
+Next: build the assumption fallback (Slice 3) — replace the seam's "pending"
+state with a real, flagged assumption value carrying its own provenance — then
+wire the components live end-to-end (proposer -> structural validator ->
+research loop -> waterfall) and validate the numbers against the hand-done
+Germany figures (Phase 4). The proposer empty-turn / researcher-garble
+continuation issues (below) gate the live wiring.
 
 The full spec is the Google Drive planning doc (now at V6) — source of truth.
 

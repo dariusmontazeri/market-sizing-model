@@ -12,13 +12,24 @@
 // stays blocked past the budget, the slot halts with a rate_limited outcome
 // (an infrastructure result, distinct from a source-quality failure).
 //
+// Slice 3 (early-stop-on-dead-end): a THIRD failure class, distinct from the two
+// above. When the researcher returns resolution_status === "dead_end" — its typed
+// verdict that NO sourceable figure exists (positively established, not merely
+// "not found this time") — the loop STOPS immediately and routes the slot to the
+// assumption-fallback SEAM. It does not descend a tier (a different source won't
+// conjure a figure that isn't published) and does not run CRAAP (there is no
+// source to score). Per Principle 5 the dead end is a MODEL judgment: code reads
+// the typed field and NEVER infers a dead end from null/empty/miss. A `miss` is
+// not a dead end — it still flows to CRAAP and tier descent as before.
+//
 // Isolation (Principle 7): the two components never share a conversation. The
 // researcher hands CRAAP only a source package (the filled skeleton). AI vs code
 // (Principle 5): the models emit judgments only; the blend, threshold, gate
-// decision, retry, backoff, and keep-best all live in code.
+// decision, retry, backoff, keep-best, and dead-end stop all live in code.
 //
-// NOT in this slice (later): assumption fallback, early-stop-on-dead-end, and
-// the proposer empty-turn fix.
+// NOT in this slice (later): the assumption fallback BODY itself (Slice 3 builds
+// only the stop + the route to a labeled seam that returns no value), and the
+// proposer empty-turn fix.
 import {
   searchSlotWithBackoff,
   type ResearchSkeleton,
@@ -34,6 +45,38 @@ import {
 } from "./craapValidator";
 
 const MAX_ATTEMPTS = 3;
+
+// The assumption-fallback SEAM (Slice 3 boundary). When a slot dead-ends, the
+// loop hands it off HERE instead of returning a figure. This is intentionally a
+// labeled, typed entry point with NO fallback logic yet: a later slice replaces
+// the "pending" state with a real, flagged assumption value carrying its own
+// provenance. The invariant that survives that change: the seam NEVER emits a
+// number. It surfaces the dead end loudly (slot label + the researcher's reason)
+// so nothing downstream can read it as a resolved figure or a silent null.
+export type AssumptionFallbackEntry = {
+  kind: "assumption_fallback_pending";
+  slotLabel: string;
+  resolutionReason: string;
+  value: null; // INVARIANT: the seam produces no figure (Slice 3 fills the rest)
+};
+
+export function enterAssumptionFallback(
+  slot: ResearchSlot,
+  resolutionReason: string,
+): AssumptionFallbackEntry {
+  const entry: AssumptionFallbackEntry = {
+    kind: "assumption_fallback_pending",
+    slotLabel: `${slot.kind} — ${slot.metric}`,
+    resolutionReason,
+    value: null,
+  };
+  // A dead end is a notable event, not a quiet null — say so out loud.
+  console.warn(
+    `[research-loop] DEAD END — slot "${entry.slotLabel}" routed to the ` +
+      `assumption-fallback seam (Slice 3, not yet built). Reason: ${resolutionReason}`,
+  );
+  return entry;
+}
 
 // CRAAP scoring, injectable so tests can drive the loop with zero API calls.
 // Defaults to the real validator. Same signature as validateSkeleton.
@@ -69,7 +112,11 @@ export type LoopAttempt = {
   usage: { inputTokens: number; outputTokens: number }; // researcher + CRAAP
 };
 
-export type SlotOutcome = "resolved" | "failed_threshold" | "rate_limited";
+export type SlotOutcome =
+  | "resolved"
+  | "failed_threshold"
+  | "rate_limited"
+  | "dead_end";
 
 export type SlotLoopResult = {
   ok: true;
@@ -79,9 +126,13 @@ export type SlotLoopResult = {
   resolved: boolean; // a CRAAP attempt passed
   failedThreshold: boolean; // every tier was evaluated and none passed (quality)
   rateLimited: boolean; // a search was unrecoverably blocked (infrastructure)
+  deadEnd: boolean; // researcher's typed verdict: no sourceable figure exists
   searchRounds: SearchRound[];
   attempts: LoopAttempt[]; // CRAAP evaluations only
   winnerAttempt: number | null; // null if no source was ever evaluated
+  // Set only on a dead_end: the labeled hand-off to the assumption-fallback seam.
+  // Carries NO figure (value is null by construction). null on every other outcome.
+  assumptionSeam: AssumptionFallbackEntry | null;
   totalUsage: { inputTokens: number; outputTokens: number };
 };
 
@@ -114,6 +165,7 @@ export async function resolveSlotWithRetry(
   const attempts: LoopAttempt[] = [];
   const totalUsage = { inputTokens: 0, outputTokens: 0 };
   let halted = false; // a search was unrecoverably rate-limited
+  let deadEndSeam: AssumptionFallbackEntry | null = null; // researcher dead-ended
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const tier = attempt as TierTarget;
@@ -147,6 +199,20 @@ export async function resolveSlotWithRetry(
       break;
     }
 
+    // Dead-end (Slice 3): the researcher's TYPED verdict that no sourceable
+    // figure exists. Checked here — after the search succeeded, BEFORE CRAAP —
+    // because a dead end has no source to score: running CRAAP or descending a
+    // tier would be wrong. Stop now and route to the assumption-fallback seam.
+    // Only resolution_status === "dead_end" triggers this; a `miss` falls
+    // through to CRAAP exactly as before (a miss is not a dead end).
+    if (search.result.skeleton.resolution_status === "dead_end") {
+      deadEndSeam = enterAssumptionFallback(
+        slot,
+        search.result.skeleton.resolution_reason,
+      );
+      break;
+    }
+
     // Search succeeded -> isolated CRAAP scoring (a real attempt).
     const craap = await validate(slotDef, search.result.skeleton);
     totalUsage.inputTokens += craap.usage.inputTokens;
@@ -174,12 +240,17 @@ export async function resolveSlotWithRetry(
     if (passed) break;
   }
 
+  // A pass is terminal (the loop breaks on it), so anyPassed and deadEndSeam are
+  // mutually exclusive; ordering anyPassed first is defensive, not load-bearing.
+  // A dead end takes precedence over any failing attempts left in the log.
   const anyPassed = attempts.some((a) => a.passed);
   const outcome: SlotOutcome = anyPassed
     ? "resolved"
-    : halted
-      ? "rate_limited"
-      : "failed_threshold";
+    : deadEndSeam
+      ? "dead_end"
+      : halted
+        ? "rate_limited"
+        : "failed_threshold";
   const winner = attempts.length > 0 ? pickBest(attempts) : null;
 
   return {
@@ -190,9 +261,13 @@ export async function resolveSlotWithRetry(
     resolved: outcome === "resolved",
     failedThreshold: outcome === "failed_threshold",
     rateLimited: outcome === "rate_limited",
+    deadEnd: outcome === "dead_end",
     searchRounds,
     attempts,
-    winnerAttempt: winner ? winner.attempt : null,
+    // A dead end resolves to no figure: never surface a winner the consumer
+    // could read as the slot's value. Only the seam represents a dead end.
+    winnerAttempt: outcome === "dead_end" ? null : winner ? winner.attempt : null,
+    assumptionSeam: deadEndSeam,
     totalUsage,
   };
 }
