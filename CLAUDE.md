@@ -126,6 +126,26 @@ structural validator once (Stage 1 5/5, Stage 2 6/6 incl. filter_narrows_demand)
 via scripts/validate-pinned-structure.ts, and its Stage-1 integrity + flag
 behavior are asserted offline in scripts/test-structure-pin.ts.
 
+Back-half orchestrator SHIPPED (`lib/orchestrator.ts`) — FIRST end-to-end wiring,
+pin ON: load pinned validated Germany structure -> deriveResearchSlots -> run the
+research loop per slot (each its own isolated researcher + CRAAP call) -> ADAPTER
+into the waterfall math -> scored result object. runBackHalfSizing is the pure
+structure-in/result-out core; runPinnedGermanySizing is the pin-gated dev entry
+(throws if PIN_STRUCTURE off — proposer front-half not wired yet). Adapter: anchor
+-> SizingInput.anchor, each filter -> a proportion (a >1 value is normalized as a
+percentage, recorded not silent), price -> unitPrice; credibility = code-mean of
+resolved slots' CRAAP weightedTotal. Independence preserved BY CONSTRUCTION (code
+wires output->input only; slots derive from the STRUCTURE, never another slot's
+result). NO silent null->0: any unresolved/dead-end slot marks the result
+INCOMPLETE, surfaces the slot loudly, and the waterfall is NOT computed (sizing
+null). Verified by a deterministic dry-run (scripts/test-orchestrator-dryrun.ts,
+zero API) on BOTH the complete path (SAM$/SOM bear-base-bull/replacement correct)
+and the INCOMPLETE path (dead-end slot -> no zero-fill), and by ONE real pinned
+Germany run (scripts/run-pinned-germany.ts) that exercised every seam live — this
+supersedes the deferred single-slot scripts/test-research-loop.ts (a superset).
+Result printed to scripts/pinned-germany.result.json. The real run came back
+INCOMPLETE — see Phase 4 items below; the wiring + honesty gate held correctly.
+
 KNOWN ISSUES (recorded, deliberately deferred):
 - Structure proposer intermittently returns an empty final turn (~1/3 of runs),
   likely a token ceiling or the turn ending mid-tool-cycle. It fails closed
@@ -149,15 +169,30 @@ KNOWN ISSUES (recorded, deliberately deferred):
   Belongs with the research-loop/continuation reliability work alongside the
   proposer fix; do NOT treat as a one-off. Deferred.
 
-Next: build the assumption fallback (Slice 3) — replace the seam's "pending"
-state with a real, flagged assumption value carrying its own provenance — then
-wire the components live end-to-end (proposer -> structural validator ->
-research loop -> waterfall) and validate the numbers against the hand-done
-Germany figures (Phase 4). At that live-wiring step, the FIRST thing to run is
-scripts/test-research-loop.ts (the live retry runner) — it was deliberately
-deferred from the efficiency slice (rate-cap cost; it tests live integration,
-not the retry/keep-best spine, which is covered deterministically). The proposer
-empty-turn / researcher-garble continuation issues (below) gate the live wiring.
+PHASE 4 — from the first real pinned Germany run (recorded, NOT this slice's job):
+- PROVENANCE INTEGRITY (higher priority — touches a component thought solved): on
+  the real run, author_publisher reads "Destatis" on the anchor and filter[0] but
+  their source_urls point to PMC/MDPI intermediaries, NOT Destatis. The V6.3
+  trace-back behavior was previously MEASURED fixed (Authority spread tightened to
+  0.031). Investigate whether this is correct path-note behavior (primary publisher
+  in author_publisher, intermediary recorded as path) with a misleading source_url,
+  OR genuine misattribution ("Destatis" over-claimed for a figure actually from the
+  paper). Possible regression — do NOT file as generic research-quality.
+- Research-quality on the known-hard slots: filter[1] (mobility-grade candidacy
+  rate, CRAAP 0.153) and price (CRAAP 0.25, purpose-gate FAIL) did not clear the
+  0.7 threshold; both correctly returned null (not zero-filled), marking the run
+  INCOMPLETE. Sourcing/validating these is Phase 4, not a wiring defect.
+- Replacement layer generalization: replacementRate is currently a hardcoded
+  flagged assumption (0.5) with no slot. The general fix is for the proposer to
+  emit a replacement sub-structure (cadence x installed base) for ANY market with a
+  renewal dynamic, sourced like any other slot — not a prosthetics-only constant.
+
+Next: wire the proposer front-half (proposer -> structural validator -> the
+orchestrator's structure input, replacing the pin on the live path), then the UI
+render of the scored result object. The assumption fallback (Slice 3) and the
+Phase-4 items above remain open. The proposer empty-turn / researcher-garble
+continuation issues (above) gate the proposer front-half wiring. (The single-slot
+scripts/test-research-loop.ts is now SUPERSEDED by the full-chain real run.)
 
 The full spec is the Google Drive planning doc (now at V6) — source of truth.
 
