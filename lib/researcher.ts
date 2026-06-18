@@ -182,7 +182,7 @@ export type AnchorResearchResult = {
   usage: { inputTokens: number; outputTokens: number };
 };
 
-type ResearcherCallResult = {
+export type ResearcherCallResult = {
   skeleton: ResearchSkeleton;
   model: string;
   usage: { inputTokens: number; outputTokens: number };
@@ -217,13 +217,25 @@ function collectSearchErrorCodes(content: Anthropic.ContentBlock[]): string[] {
   return codes;
 }
 
+// Per-call web_search ceiling. The research loop sets this per attempt (a cheaper
+// first attempt, a richer escalated one); callers that pass nothing get the full
+// budget. FLOORED at 3 — trace-back to a primary publisher is search-hungry and 3
+// is the validated minimum, so the ceiling never drops below it.
+const MIN_SEARCHES = 3;
+const DEFAULT_MAX_SEARCHES = 5;
+
 // One isolated researcher call. Takes the fully-built user message and runs the
 // web-search + structured-output extraction for a single slot. Shared by the
 // anchor-slot path and the structure slot-resolution path so the isolated-call
 // mechanics live in exactly one place.
 async function runResearcherCall(
   userContent: string,
+  opts?: { maxSearches?: number },
 ): Promise<ResearcherCallResult> {
+  const maxSearches = Math.max(
+    MIN_SEARCHES,
+    opts?.maxSearches ?? DEFAULT_MAX_SEARCHES,
+  );
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error("ANTHROPIC_API_KEY is not set in the server environment");
@@ -240,8 +252,11 @@ async function runResearcherCall(
       max_tokens: 4096,
       thinking: { type: "adaptive" },
       system: ANCHOR_SYSTEM_PROMPT,
-      // Server-side web search; max_uses bounds cost per call.
-      tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 5 }],
+      // Server-side web search; max_uses bounds cost per call (attempt-dependent,
+      // floored at MIN_SEARCHES).
+      tools: [
+        { type: "web_search_20260209", name: "web_search", max_uses: maxSearches },
+      ],
       output_config: {
         format: {
           type: "json_schema",
@@ -428,7 +443,12 @@ const TIER_DIRECTIVE: Record<TierTarget, string> = {
 // sit OUTSIDE the untrusted block alongside the task instruction.
 export async function researchSlot(
   slot: ResearchSlot,
-  opts?: { tier?: TierTarget; attempt?: number; avoidPublishers?: string[] },
+  opts?: {
+    tier?: TierTarget;
+    attempt?: number;
+    avoidPublishers?: string[];
+    maxSearches?: number;
+  },
 ): Promise<ResearcherCallResult> {
   const lines = [
     "Fill the extraction skeleton for the research slot described in the data block.",
@@ -451,7 +471,7 @@ export async function researchSlot(
     wrapUntrusted(
       `Slot kind: ${slot.kind}\nGeography: ${slot.geography}\nMetric: ${slot.metric}\nSlot definition: ${slot.definition}`,
     );
-  return runResearcherCall(userContent);
+  return runResearcherCall(userContent, { maxSearches: opts?.maxSearches });
 }
 
 // ---------------------------------------------------------------------------
@@ -510,12 +530,22 @@ export type SearchOutcome =
 // blocks/recoveries with zero API calls. Defaults to the real researcher.
 export type SearchFn = (
   slot: ResearchSlot,
-  opts?: { tier?: TierTarget; attempt?: number; avoidPublishers?: string[] },
+  opts?: {
+    tier?: TierTarget;
+    attempt?: number;
+    avoidPublishers?: string[];
+    maxSearches?: number;
+  },
 ) => Promise<ResearcherCallResult>;
 
 export async function searchSlotWithBackoff(
   slot: ResearchSlot,
-  opts?: { tier?: TierTarget; attempt?: number; avoidPublishers?: string[] },
+  opts?: {
+    tier?: TierTarget;
+    attempt?: number;
+    avoidPublishers?: string[];
+    maxSearches?: number;
+  },
   searchFn: SearchFn = researchSlot,
 ): Promise<SearchOutcome> {
   const blockCodes: string[] = [];

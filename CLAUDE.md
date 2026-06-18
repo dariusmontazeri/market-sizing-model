@@ -87,6 +87,14 @@ Research loop (`lib/researchLoop.ts`, `resolveSlotWithRetry`) — Slices 1 & 2
 SHIPPED + pushed (latest 762ab9e):
 - Slice 1: CRAAP-driven retry + tier descent (attempt N targets tier N, 3
   attempts) + keep-best across attempts; all arithmetic and routing in code.
+- Efficiency tightening (pre-Germany): attempt budget is now DEFAULT 1, earn the
+  rest — the first attempt accepts + stops the moment CRAAP clears 0.7; the 2
+  further attempts are spent ONLY on a sub-0.7 verdict (escalate on evidence).
+  web_search ceiling is attempt-dependent: 3 on the first attempt, 5 on an
+  escalated one (floored at 3 in the researcher — trace-back is search-hungry).
+  Keep-best unchanged but dormant on the single-attempt path. Proven by a
+  deterministic offline budget test (scripts/test-research-loop-budget.ts:
+  accept-on-first-pass, 3/5 ceiling captured per attempt, keep-best on escalation).
 - Slice 2: web_search spacing (~2s) + exponential backoff (2/4/8) that
   distinguishes a rate-limit BLOCK (retry the SAME tier; exhausted -> a
   rate_limited halt, no invented value) from a CRAAP FAILURE (descend a tier).
@@ -105,6 +113,18 @@ SHIPPED + pushed (latest 762ab9e):
   correctly, incl. dead_end consuming no further attempts and emitting no number
   even when the skeleton adversarially carries a value. The assumption fallback
   BODY itself (Slice 3) is still TODO (not built — the seam returns no value).
+
+Dev-only structure pin (`lib/structurePin.ts`, Option A): PIN_STRUCTURE env flag
+(OFF by default, OFF in prod) loads a known-good VALIDATED Germany structure
+straight into the research loop, bypassing BOTH the proposer and the structural
+validator — a dev affordance for the expensive Germany phase. PRODUCTION PATH
+UNTOUCHED: with the flag off the live path always runs proposer -> validator ->
+loop, and nothing runs unless a caller first checks isStructurePinned(). The
+pinned const is the committed proposer fixture with the phantom Hilfsmittel
+reimbursable-listing filter (+ its orphaned distinction) REMOVED; it passed the
+structural validator once (Stage 1 5/5, Stage 2 6/6 incl. filter_narrows_demand)
+via scripts/validate-pinned-structure.ts, and its Stage-1 integrity + flag
+behavior are asserted offline in scripts/test-structure-pin.ts.
 
 KNOWN ISSUES (recorded, deliberately deferred):
 - Structure proposer intermittently returns an empty final turn (~1/3 of runs),
@@ -133,8 +153,11 @@ Next: build the assumption fallback (Slice 3) — replace the seam's "pending"
 state with a real, flagged assumption value carrying its own provenance — then
 wire the components live end-to-end (proposer -> structural validator ->
 research loop -> waterfall) and validate the numbers against the hand-done
-Germany figures (Phase 4). The proposer empty-turn / researcher-garble
-continuation issues (below) gate the live wiring.
+Germany figures (Phase 4). At that live-wiring step, the FIRST thing to run is
+scripts/test-research-loop.ts (the live retry runner) — it was deliberately
+deferred from the efficiency slice (rate-cap cost; it tests live integration,
+not the retry/keep-best spine, which is covered deterministically). The proposer
+empty-turn / researcher-garble continuation issues (below) gate the live wiring.
 
 The full spec is the Google Drive planning doc (now at V6) — source of truth.
 

@@ -5,6 +5,14 @@
 // The retry budget IS the tier descent — attempt N targets tier N — up to 3
 // attempts. Keep the best source across all attempts, not the first to pass.
 //
+// Efficiency slice (pre-Germany): the budget is DEFAULT 1, earn the rest. The
+// first attempt is the unescalated default — accept and stop the moment CRAAP
+// clears the threshold; the 2 further attempts are spent ONLY when CRAAP comes
+// back sub-threshold (escalate on evidence). Coupled with a cheaper search
+// ceiling on that first attempt (MAX_SEARCHES_FIRST) than on an escalated one
+// (MAX_SEARCHES_ESCALATED). Keep-best is unchanged but dormant on the common
+// single-attempt path; it only arbitrates once escalation produces >1 source.
+//
 // Slice 2: separate a web_search RATE-LIMIT BLOCK from a CRAAP FAILURE. The
 // search is wrapped in spacing + backoff (searchSlotWithBackoff). A block means
 // the search never ran and no source was evaluated, so it must NOT descend a
@@ -44,7 +52,20 @@ import {
   type SlotDefinition,
 } from "./craapValidator";
 
+// Attempt budget: DEFAULT 1, earn the rest. The first attempt is the cheap,
+// unescalated default — resolve the slot, score it, and if CRAAP clears the
+// threshold ACCEPT and STOP. The 2 further attempts are NOT spent by default;
+// each is EARNED only by a sub-threshold CRAAP verdict (the escalate-on-evidence
+// path), which descends a tier and tries a fresh source. So the common case is a
+// single search-enabled attempt; tier descent + keep-best engage only when CRAAP
+// says the source was not good enough.
 const MAX_ATTEMPTS = 3;
+
+// Web_search ceiling per attempt: the cheap first attempt searches less; an
+// escalated attempt (earned by a sub-threshold CRAAP) gets the fuller budget so a
+// hard slot can still recover. Never below MIN_SEARCHES (enforced in researcher).
+const MAX_SEARCHES_FIRST = 3;
+const MAX_SEARCHES_ESCALATED = 5;
 
 // The assumption-fallback SEAM (Slice 3 boundary). When a slot dead-ends, the
 // loop hands it off HERE instead of returning a figure. This is intentionally a
@@ -169,6 +190,12 @@ export async function resolveSlotWithRetry(
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const tier = attempt as TierTarget;
+    // Escalated = any attempt past the default first one. Reaching here on
+    // attempt > 1 means a prior CRAAP verdict came back sub-threshold (the only
+    // path that continues the loop), so the escalation was earned, not spent by
+    // default. The escalated attempt gets the fuller search budget.
+    const escalated = attempt > 1;
+    const maxSearches = escalated ? MAX_SEARCHES_ESCALATED : MAX_SEARCHES_FIRST;
     const avoidPublishers = attempts
       .map((a) => a.skeleton.author_publisher)
       .filter((p): p is string => typeof p === "string" && p.trim() !== "");
@@ -178,7 +205,7 @@ export async function resolveSlotWithRetry(
     // backoff budget was exhausted.
     const search = await searchSlotWithBackoff(
       slot,
-      { tier, attempt, avoidPublishers },
+      { tier, attempt, avoidPublishers, maxSearches },
       searchFn,
     );
     totalUsage.inputTokens += search.usage.inputTokens;
