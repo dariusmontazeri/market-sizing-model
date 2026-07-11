@@ -57,6 +57,9 @@ export type SlotSource = {
   source_url: string | null;
 };
 
+// Which ladder rung produced the slot's value (V6.18). null when no value.
+export type SlotResolution = "sourced" | "proxy" | "assumption";
+
 // A flat, traceable view of one slot's outcome for the result object.
 export type ResolvedSlotView = {
   kind: ResearchSlot["kind"];
@@ -64,14 +67,23 @@ export type ResolvedSlotView = {
   metric: string;
   outcome: SlotOutcome;
   resolved: boolean;
+  // Ladder rung that produced the value: "sourced" (direct research passed),
+  // "proxy" (declared comparable-geography source), "assumption" (reasoned
+  // estimate, no source). null when the slot yielded no usable value.
+  resolution: SlotResolution | null;
   rawValue: number | null;
   units: string | null;
   // For filters only: the rawValue normalized to a [0,1] proportion for the math.
   normalizedRate: number | null;
   normalizationNote: string | null;
   source: SlotSource | null;
-  craapScore: number | null; // winner attempt's blended CRAAP weightedTotal
+  craapScore: number | null; // blended CRAAP of the value's own source (proxy included)
   purposeGate: "pass" | "fail" | null;
+  // Proxy rung detail (resolution === "proxy" only).
+  proxyGeography: string | null;
+  proxyJustification: string | null;
+  // Assumption rung detail (resolution === "assumption" only).
+  assumptionReasoning: string | null;
   // True when the slot was replayed from the slot-results cache (a prior
   // ACCEPTED run) rather than researched live — surfaced, never hidden.
   fromCache: boolean;
@@ -119,38 +131,85 @@ function normalizeRate(
 }
 
 function reasonFor(result: SlotLoopResult): string {
-  switch (result.outcome) {
-    case "dead_end":
-      return `DEAD END — ${result.assumptionSeam?.resolutionReason ?? "researcher established no sourceable figure exists"} (routes to the assumption-fallback seam; no figure)`;
-    case "rate_limited":
-      return "search was rate-limited (infrastructure) — no source was obtained; not a quality verdict";
-    case "failed_threshold":
-      return `no source cleared CRAAP ${result.threshold} across all tiers`;
-    case "resolved":
-      return "resolved but the winning source carried no finite numeric value";
+  if (result.outcome === "rate_limited") {
+    return "search was rate-limited (infrastructure) — no source was obtained; not a quality verdict; the ladder was NOT descended";
   }
+  return `resolved via ${result.outcome} but no finite numeric value came back`;
 }
 
 // Map one slot's loop result into the flat view + decide if it yielded a number.
+// The value's origin follows the ladder rung (V6.18): direct winner skeleton,
+// declared-proxy skeleton, or the reasoned assumption.
 function viewSlot(slot: ResearchSlot, result: SlotLoopResult): ResolvedSlotView {
   const winner =
     result.winnerAttempt !== null
       ? (result.attempts.find((a) => a.attempt === result.winnerAttempt) ?? null)
       : null;
-  const skeleton = winner?.skeleton ?? null;
-  const rawValue =
-    typeof skeleton?.value === "number" && Number.isFinite(skeleton.value)
-      ? skeleton.value
-      : null;
 
-  // "Usable" = the loop resolved AND a finite value actually came back. Anything
-  // else is unresolved for sizing purposes — never silently zeroed.
-  const usable = result.outcome === "resolved" && rawValue !== null;
+  let resolution: SlotResolution | null = null;
+  let rawValue: number | null = null;
+  let units: string | null = null;
+  let source: SlotSource | null = null;
+  let craapScore: number | null = null;
+  let purposeGate: "pass" | "fail" | null = null;
+  let proxyGeography: string | null = null;
+  let proxyJustification: string | null = null;
+  let assumptionReasoning: string | null = null;
+
+  if (result.outcome === "resolved" && winner) {
+    const skeleton = winner.skeleton;
+    resolution = "sourced";
+    rawValue =
+      typeof skeleton.value === "number" && Number.isFinite(skeleton.value)
+        ? skeleton.value
+        : null;
+    units = skeleton.units;
+    source = {
+      author_publisher: skeleton.author_publisher,
+      source_url: skeleton.source_url,
+    };
+    craapScore = winner.blendedScore;
+    purposeGate = winner.purposePass ? "pass" : "fail";
+  } else if (result.outcome === "resolved_proxy" && result.proxy) {
+    const skeleton = result.proxy.skeleton;
+    resolution = "proxy";
+    rawValue =
+      typeof skeleton.value === "number" && Number.isFinite(skeleton.value)
+        ? skeleton.value
+        : null;
+    units = skeleton.units;
+    source = {
+      author_publisher: skeleton.author_publisher,
+      source_url: skeleton.source_url,
+    };
+    craapScore = result.proxy.blendedScore;
+    purposeGate =
+      result.proxy.purposePass === null
+        ? null
+        : result.proxy.purposePass
+          ? "pass"
+          : "fail";
+    proxyGeography = skeleton.geography;
+    proxyJustification = skeleton.proxy_justification;
+  } else if (result.outcome === "resolved_assumption" && result.assumption) {
+    resolution = "assumption";
+    rawValue = Number.isFinite(result.assumption.value)
+      ? result.assumption.value
+      : null;
+    units = result.assumption.units;
+    assumptionReasoning = result.assumption.reasoning;
+    // No source, no CRAAP: an assumption is graded by nobody and says so.
+  }
+
+  // "Usable" = some rung yielded a finite value. Anything else is unresolved
+  // for sizing purposes — never silently zeroed.
+  const usable = rawValue !== null;
+  if (!usable) resolution = null;
 
   let normalizedRate: number | null = null;
   let normalizationNote: string | null = null;
-  if (usable && slot.kind === "filter") {
-    const norm = normalizeRate(rawValue, skeleton?.units ?? null);
+  if (usable && slot.kind === "filter" && rawValue !== null) {
+    const norm = normalizeRate(rawValue, units);
     normalizedRate = norm.rate;
     normalizationNote = norm.note;
   }
@@ -161,15 +220,17 @@ function viewSlot(slot: ResearchSlot, result: SlotLoopResult): ResolvedSlotView 
     metric: slot.metric,
     outcome: result.outcome,
     resolved: usable,
+    resolution,
     rawValue,
-    units: skeleton?.units ?? null,
+    units,
     normalizedRate,
     normalizationNote,
-    source: skeleton
-      ? { author_publisher: skeleton.author_publisher, source_url: skeleton.source_url }
-      : null,
-    craapScore: winner ? winner.blendedScore : null,
-    purposeGate: winner ? (winner.purposePass ? "pass" : "fail") : null,
+    source,
+    craapScore,
+    purposeGate,
+    proxyGeography,
+    proxyJustification,
+    assumptionReasoning,
     fromCache: result.fromCache,
     unresolvedReason: usable ? null : reasonFor(result),
   };
@@ -197,15 +258,45 @@ export async function runBackHalfSizing(
     views.push(viewSlot(slot, result));
   }
 
-  // Credibility = mean of the per-slot CRAAP blended scores over RESOLVED, sourced
-  // slots only (assumptions excluded). Arithmetic in code (Principle 5).
+  // Credibility = mean of the per-slot CRAAP blended scores over DIRECTLY
+  // SOURCED slots only. Proxy and assumption values are excluded — a declared
+  // proxy's CRAAP grades the source for its OWN geography, and an assumption
+  // has no source at all; counting either would inflate the model's claimed
+  // sourcing quality. Both are flagged in `assumptions`. Arithmetic in code
+  // (Principle 5).
   const resolvedScores = views
-    .filter((v) => v.resolved && v.craapScore !== null)
+    .filter((v) => v.resolution === "sourced" && v.craapScore !== null)
     .map((v) => v.craapScore as number);
   const credibilityScore =
     resolvedScores.length > 0
       ? resolvedScores.reduce((a, b) => a + b, 0) / resolvedScores.length
       : null;
+
+  // Every ladder fallback is an explicit, loudly-flagged entry (governing
+  // principle: every number traces to a source OR an explicit assumption tag).
+  const slotFieldName = (v: ResolvedSlotView) =>
+    `${v.kind}${v.filterIndex !== null ? `[${v.filterIndex}]` : ""}`;
+  const ladderFlags: AssumptionFlag[] = views.flatMap((v) => {
+    if (v.resolution === "proxy" && v.rawValue !== null) {
+      return [
+        {
+          field: slotFieldName(v),
+          value: v.rawValue,
+          basis: `DECLARED GEOGRAPHY PROXY (not a direct ${market.country} figure): sourced for ${v.proxyGeography ?? "a comparable geography"} — ${v.proxyJustification ?? "no justification recorded"}. Source CRAAP ${v.craapScore?.toFixed(3) ?? "n/a"} graded against the proxy geography. Excluded from the credibility score; verify transferability to ${market.country}.`,
+        },
+      ];
+    }
+    if (v.resolution === "assumption" && v.rawValue !== null) {
+      return [
+        {
+          field: slotFieldName(v),
+          value: v.rawValue,
+          basis: `EXPLICIT ASSUMPTION (no source; direct research and a geography proxy both failed): ${v.assumptionReasoning ?? "no reasoning recorded"}. Excluded from the credibility score; this is the model's own reasoning, not data.`,
+        },
+      ];
+    }
+    return [];
+  });
 
   // Completeness: EVERY derived slot must have yielded a usable number.
   const incompleteReasons = views
@@ -255,12 +346,12 @@ export async function runBackHalfSizing(
     slots: views,
     sizing,
     sizingInputs,
-    assumptions: [REPLACEMENT_RATE_ASSUMPTION],
+    assumptions: [...ladderFlags, REPLACEMENT_RATE_ASSUMPTION],
     credibility: {
       score: credibilityScore,
       basis: complete
-        ? "mean of per-slot CRAAP weightedTotal across all resolved, sourced slots (assumptions excluded)"
-        : "PARTIAL — mean over resolved slots only; run is INCOMPLETE so this is not a whole-model score",
+        ? "mean of per-slot CRAAP weightedTotal across DIRECTLY SOURCED slots only (proxy and assumption values excluded and flagged)"
+        : "PARTIAL — mean over directly sourced slots only; run is INCOMPLETE so this is not a whole-model score",
     },
     usage,
   };

@@ -345,7 +345,7 @@ export function slotCallOptions(
     "Build your search query per the rules and extract exactly one sourced figure for this slot.",
   ];
   if (opts?.tier) {
-    const attemptNote = opts.attempt ? ` (attempt ${opts.attempt} of 3)` : "";
+    const attemptNote = opts.attempt ? ` (attempt ${opts.attempt})` : "";
     lines.push(
       `Source-quality target for this attempt${attemptNote}: ${TIER_DIRECTIVE[opts.tier]} Prefer the most authoritative source available at this tier.`,
     );
@@ -388,6 +388,173 @@ export async function researchSlot(
   return finalizeResearcherResult(
     await runStructuredCall(slotCallOptions(slot, opts)),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Resolution ladder rung 2 — DECLARED GEOGRAPHY PROXY (V6.18).
+//
+// When the direct figure cannot be sourced (failed threshold or dead end), the
+// ladder's next rung researches the SAME metric for the most comparable OTHER
+// geography, declared openly. Same researcher, same skeleton, one extra
+// REQUIRED field: proxy_justification (which geography and why comparable).
+// The skeleton's own `geography` field carries the proxy geography.
+
+export type ProxySkeleton = AnchorSkeleton & { proxy_justification: string };
+
+const PROXY_SKELETON_SCHEMA = {
+  ...ANCHOR_SKELETON_SCHEMA,
+  required: [...SKELETON_KEYS, "proxy_justification"],
+  properties: {
+    ...ANCHOR_SKELETON_SCHEMA.properties,
+    proxy_justification: {
+      type: "string",
+      description:
+        "Which geography you used as the proxy and WHY it is comparable to the slot's original geography for this specific metric.",
+    },
+  },
+} as const;
+
+export function isProxySkeleton(value: unknown): value is ProxySkeleton {
+  return (
+    isAnchorSkeleton(value) &&
+    typeof (value as Record<string, unknown>).proxy_justification === "string"
+  );
+}
+
+export type ProxyCallResult = ResearcherCallResult & {
+  skeleton: ProxySkeleton;
+};
+
+export function proxySlotCallOptions(
+  slot: ResearchSlot,
+  opts?: ResearchSlotCallOpts,
+): StructuredCallOptions<ProxySkeleton> {
+  const lines = [
+    `The direct figure for this slot could NOT be sourced for ${slot.geography} (no source of acceptable quality exists or was findable).`,
+    "This attempt is a DECLARED GEOGRAPHY PROXY: find the SAME metric, with the same definition and the same denominator requirements, for the most comparable OTHER geography you can source it for.",
+    "Pick the proxy geography for structural similarity to the original on the dimensions that drive THIS metric (e.g. health-system organization, income level, demographics, market maturity — whichever apply).",
+    "Report the figure AS PUBLISHED for the proxy geography — do NOT scale or adjust it toward the original geography. Fill the skeleton's geography field with the proxy geography, and explain the choice in proxy_justification.",
+    "TRANSFERABILITY LIMIT: rates, shares, and prices can transfer between comparable geographies; ABSOLUTE COUNTS cannot (a smaller country's raw count says nothing about the original geography). If this slot asks for an absolute count, only use a proxy whose figure can honestly fill the slot in a population-independent form matching the slot definition; if only raw foreign counts exist, return resolution_status dead_end for this proxy attempt instead.",
+    "All other rules (trace-back, name/link agreement, denominator, representativeness) apply unchanged.",
+  ];
+  if (opts?.avoidPublishers && opts.avoidPublishers.length > 0) {
+    lines.push(
+      `Do NOT reuse these already-rejected sources: ${opts.avoidPublishers.join("; ")}.`,
+    );
+  }
+  const userContent =
+    lines.join("\n") +
+    "\n" +
+    wrapUntrusted(
+      `Slot kind: ${slot.kind}\nOriginal geography: ${slot.geography}\nMetric: ${slot.metric}\nSlot definition: ${slot.definition}`,
+    );
+  const maxSearches = Math.max(
+    MIN_SEARCHES,
+    opts?.maxSearches ?? DEFAULT_MAX_SEARCHES,
+  );
+  return {
+    label: "researcher (geography proxy)",
+    model: MODELS.researcher,
+    system: RESEARCHER_SYSTEM_PROMPT,
+    userContent,
+    schema: PROXY_SKELETON_SCHEMA as unknown as Record<string, unknown>,
+    guard: isProxySkeleton,
+    maxTokens: RESEARCHER_MAX_TOKENS,
+    tools: [
+      { type: "web_search_20260209", name: "web_search", max_uses: maxSearches },
+    ],
+  };
+}
+
+export async function researchSlotProxy(
+  slot: ResearchSlot,
+  opts?: ResearchSlotCallOpts,
+): Promise<ProxyCallResult> {
+  const r = await runStructuredCall(proxySlotCallOptions(slot, opts));
+  return { ...finalizeResearcherResult(r), skeleton: r.value };
+}
+
+// ---------------------------------------------------------------------------
+// Resolution ladder rung 3 — REASONED ASSUMPTION (V6.18).
+//
+// The final rung: no web access, one isolated call that constructs a
+// transparent, conservative estimate from first principles ("its own
+// thinking"). It ALWAYS yields a value — this is the reason the ladder never
+// ends empty-handed — and the value is flagged as an explicit assumption,
+// excluded from the credibility score.
+
+export type AssumptionOutput = {
+  value: number;
+  units: string;
+  reasoning: string;
+};
+
+const ASSUMPTION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["value", "units", "reasoning"],
+  properties: {
+    value: {
+      type: "number",
+      description: "Your reasoned estimate for the slot's quantity, in the slot's own terms.",
+    },
+    units: {
+      type: "string",
+      description: "Units of the estimate (e.g. 'percent', 'EUR', 'events per year') — consistent with the slot definition.",
+    },
+    reasoning: {
+      type: "string",
+      description:
+        "The full logic chain: reference points used, structural bounds, why this magnitude, where you chose the conservative end, and an honest statement of the estimate's weakness.",
+    },
+  },
+} as const;
+
+function isAssumptionOutput(value: unknown): value is AssumptionOutput {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.value === "number" &&
+    Number.isFinite(v.value) &&
+    typeof v.units === "string" &&
+    typeof v.reasoning === "string"
+  );
+}
+
+const ASSUMPTION_SYSTEM_PROMPT = loadInstruction("assumption.md");
+const ASSUMPTION_MAX_TOKENS = 4096;
+
+export type AssumptionCallResult = {
+  assumption: AssumptionOutput;
+  model: string;
+  usage: { inputTokens: number; outputTokens: number };
+};
+
+export function assumptionCallOptions(
+  slot: ResearchSlot,
+): StructuredCallOptions<AssumptionOutput> {
+  const userContent =
+    "Produce one reasoned, conservative assumption for the research slot described in the data block. Live research (direct and via a declared geography proxy) could not source this figure.\n" +
+    wrapUntrusted(
+      `Slot kind: ${slot.kind}\nGeography: ${slot.geography}\nMetric: ${slot.metric}\nSlot definition: ${slot.definition}`,
+    );
+  return {
+    label: "assumption reasoner",
+    model: MODELS.researcher,
+    system: ASSUMPTION_SYSTEM_PROMPT,
+    userContent,
+    schema: ASSUMPTION_SCHEMA as unknown as Record<string, unknown>,
+    guard: isAssumptionOutput,
+    maxTokens: ASSUMPTION_MAX_TOKENS,
+    // No tools: this rung is reasoning, not research.
+  };
+}
+
+export async function reasonAssumption(
+  slot: ResearchSlot,
+): Promise<AssumptionCallResult> {
+  const r = await runStructuredCall(assumptionCallOptions(slot));
+  return { assumption: r.value, model: r.model, usage: r.usage };
 }
 
 // ---------------------------------------------------------------------------

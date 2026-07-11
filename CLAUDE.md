@@ -52,12 +52,21 @@ object is deferred (build focus is the tool itself).
   (reimbursement schedules, tariffs, procurement data pass); only
   intent-to-persuade fails (teaser pricing, lead-gen quotes). Measure vs sell.
 - Code: research loop (`lib/researchLoop.ts`) — attempt budget DEFAULT 1, earn
-  2 more only on a sub-0.7 CRAAP verdict; tier descent (attempt N targets tier
-  N) + keep-best; web_search spacing (~2s) + exponential backoff (2/4/8)
+  1 more only on a sub-0.7 CRAAP verdict (V6.18.1: the old tier-3 desperation
+  pass was cut — it structurally can't clear an authority-weighted 0.7); tier
+  descent + keep-best; web_search spacing (~2s) + exponential backoff (2/4/8)
   distinguishing a rate-limit BLOCK (retry same tier; exhausted -> rate_limited
-  halt) from a CRAAP FAILURE (descend); early-stop on dead_end routing to the
-  assumption-fallback SEAM (typed, emits NO value — the fallback BODY is still
-  TODO). Orchestrator (`lib/orchestrator.ts`) — structure -> deriveResearchSlots
+  halt) from a CRAAP FAILURE (descend). Then the RESOLUTION LADDER (V6.18,
+  user protocol): failed_threshold AND dead_end BOTH descend — (rung 2) one
+  DECLARED GEOGRAPHY PROXY call (required proxy_justification; CRAAP-graded
+  against ITS OWN geography; same 0.7 + Purpose bar; raw COUNTS never transfer
+  — population-independent or the rung dead-ends), then (rung 3) a REASONED
+  ASSUMPTION (isolated no-search call, instructions/assumption.md: value +
+  full reasoning, conservative). Every slot ends with a value EXCEPT
+  rate_limited (an infrastructure failure is never laundered into a fabricated
+  assumption). Proxy/assumption values complete the sizing but are EXCLUDED
+  from credibility, each with a loud AssumptionFlag; NEVER cached.
+  Orchestrator (`lib/orchestrator.ts`) — structure -> deriveResearchSlots
   (each filter slot states its exact DENOMINATOR = survivors of the previous
   cut) -> loop per slot -> adapter -> units-math -> scored result object.
   NO silent null->0: any unresolved slot marks the run INCOMPLETE, sizing null.
@@ -127,8 +136,8 @@ object is deferred (build focus is the tool itself).
   repeatability test); B: Germany battery-electric cars (pipeline smoke, Tier-1
   KBA coverage; prerequisite: parameterize proposeStructure, the hardcoded
   market was a placeholder); C: fallback ladder in isolation (declared
-  geography proxy -> flagged assumption; requires the researcher proxy
-  directive + Slice 3 body). Price is the flagged high-variance slot — the UI
+  geography proxy -> flagged assumption; UNLOCKED — the resolution ladder is
+  built, V6.18). Price is the flagged high-variance slot — the UI
   phase must tell the user prices vary significantly and are the top number to
   verify themselves.
 
@@ -145,7 +154,11 @@ object is deferred (build focus is the tool itself).
   the hand model's 5-year replacement cadence), excluded from credibility.
   General fix: the proposer emits a replacement sub-structure (cadence x
   installed base) for ANY renewal market.
-- Assumption fallback BODY (Slice 3): the seam exists and emits no value.
+- Resolution ladder (V6.18) BUILT and offline-proven (6 suites), but NOT yet
+  validated live; CRAAP representativeness rule (single-site/small-cohort
+  rates score population_match <= 0.3 against national-rate slots) and the
+  researcher's administered-price steer are also instruction-level only until
+  the next live run confirms them.
 
 ### Next, in order
 1. Phase 4 Germany number validation (pin ON, RESEARCH_CACHE=1): re-run the

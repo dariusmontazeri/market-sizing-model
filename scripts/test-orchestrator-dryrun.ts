@@ -155,8 +155,8 @@ async function caseComplete() {
   check("credibility = mean of slot CRAAP = 0.825", r.credibility.score !== null && Math.abs(r.credibility.score - 0.825) < 1e-9, r.credibility.score);
 }
 
-async function caseDeadEnd() {
-  console.log("\n=== Case 2: price slot dead-ends -> INCOMPLETE, no zero-fill ===");
+async function caseDeadEndLadder() {
+  console.log("\n=== Case 2: price slot dead-ends -> LADDER: declared proxy resolves it (V6.18) ===");
   const searchFn: SearchFn = async (slot) =>
     slot.kind === "price"
       ? deadEnd("no per-device price is published in Germany (fake dead end)")
@@ -165,33 +165,67 @@ async function caseDeadEnd() {
     craapFor(
       /Annual/.test(slotDef.metric)
         ? ({ kind: "anchor", filterIndex: null } as ResearchSlot)
-        : /Major-limb/.test(slotDef.metric)
-          ? ({ kind: "filter", filterIndex: 0 } as ResearchSlot)
-          : ({ kind: "filter", filterIndex: 1 } as ResearchSlot),
+        : /price/i.test(slotDef.metric)
+          ? ({ kind: "price", filterIndex: null } as ResearchSlot)
+          : /Major-limb/.test(slotDef.metric)
+            ? ({ kind: "filter", filterIndex: 0 } as ResearchSlot)
+            : ({ kind: "filter", filterIndex: 1 } as ResearchSlot),
     );
+  // Ladder rung 2: the proxy finds an Austrian administered price.
+  let proxyCalls = 0;
+  const proxySearchFn = async () => {
+    proxyCalls++;
+    return {
+      skeleton: {
+        search_query: "prosthesis reimbursement price austria",
+        value: 7000,
+        units: "EUR",
+        date: "2025",
+        author_publisher: "Fake Austrian Insurer Tariff",
+        source_url: "https://example.org/at-tariff",
+        geography: "Austria",
+        population_segment: "all",
+        metric_definition: "fake administered price",
+        resolution_status: "found" as const,
+        resolution_reason: "sourced from the Austrian tariff list",
+        proxy_justification: "Austria's statutory insurance reimburses prosthetics under a comparable administered-price system",
+      },
+      model: "fake",
+      usage: { inputTokens: 1, outputTokens: 1 },
+      searchErrorCodes: [],
+      rateLimitBlocked: false,
+    };
+  };
+  const assumptionFn = async () => {
+    throw new Error("assumption rung must not be reached when the proxy passes");
+  };
 
-  const r = await runPinnedGermanySizing({ searchFn, validateFn });
+  const r = await runPinnedGermanySizing({ searchFn, validateFn, proxySearchFn, assumptionFn });
 
-  console.log("  complete:", r.complete, "| sizing:", r.sizing, "| sizingInputs:", r.sizingInputs);
-  console.log("  incompleteReasons:", JSON.stringify(r.incompleteReasons));
+  console.log("  complete:", r.complete, "| credibility:", r.credibility.score);
   const price = r.slots.find((s) => s.kind === "price");
-  console.log("  price slot:", JSON.stringify({ outcome: price?.outcome, resolved: price?.resolved, raw: price?.rawValue, reason: price?.unresolvedReason }));
+  console.log("  price slot:", JSON.stringify({ outcome: price?.outcome, resolution: price?.resolution, raw: price?.rawValue, proxyGeo: price?.proxyGeography }));
+  console.log("  assumptions:", JSON.stringify(r.assumptions.map((a) => a.field)));
 
-  check("complete is FALSE", r.complete === false, r.complete);
-  check("sizing is null (no waterfall on a missing number)", r.sizing === null, r.sizing);
-  check("sizingInputs null", r.sizingInputs === null, r.sizingInputs);
-  check("incompleteReasons surfaces the price slot", r.incompleteReasons.some((x) => /price/.test(x) && /DEAD END/.test(x)), r.incompleteReasons);
-  check("price slot outcome dead_end", price?.outcome === "dead_end", price?.outcome);
-  check("price slot NOT resolved", price?.resolved === false, price?.resolved);
-  check("price slot rawValue null (NOT zero-filled)", price?.rawValue === null, price?.rawValue);
-  check("the 3 non-price slots still resolved", r.slots.filter((s) => s.kind !== "price").every((s) => s.resolved), true);
+  check("proxy rung ran once for the price slot", proxyCalls === 1, proxyCalls);
+  check("complete is TRUE (the ladder never ends empty-handed)", r.complete === true, r.complete);
+  check("price slot outcome resolved_proxy", price?.outcome === "resolved_proxy", price?.outcome);
+  check('price slot resolution "proxy"', price?.resolution === "proxy", price?.resolution);
+  check("price value = the proxy figure (7000)", price?.rawValue === 7000, price?.rawValue);
+  check("proxy geography surfaced (Austria)", price?.proxyGeography === "Austria", price?.proxyGeography);
+  check("proxy justification surfaced", typeof price?.proxyJustification === "string" && price.proxyJustification.includes("Austria"), price?.proxyJustification);
+  check("sizing computed with the proxy price (1800 * 7000 = 12.6M)", r.sizing?.samDollars === 12_600_000, r.sizing?.samDollars);
+  check("price flagged as a declared-proxy assumption entry", r.assumptions.some((a) => a.field === "price" && a.value === 7000 && /DECLARED GEOGRAPHY PROXY/.test(a.basis)), r.assumptions.map((a) => a.field));
+  // credibility excludes the proxy slot: mean(0.9, 0.8, 0.85) = 0.85
+  check("credibility = mean of SOURCED slots only = 0.85", r.credibility.score !== null && Math.abs(r.credibility.score - 0.85) < 1e-9, r.credibility.score);
+  check("the 3 non-price slots resolved as sourced", r.slots.filter((s) => s.kind !== "price").every((s) => s.resolution === "sourced"), true);
 }
 
 async function main() {
   process.env.PIN_STRUCTURE = "germany"; // dev pin ON for the back-half path
   console.log("Deterministic offline dry-run of the back-half orchestrator (ZERO API calls)");
   await caseComplete();
-  await caseDeadEnd();
+  await caseDeadEndLadder();
   console.log(`\n${failures === 0 ? "ALL CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);
   process.exit(failures === 0 ? 0 : 1);
 }

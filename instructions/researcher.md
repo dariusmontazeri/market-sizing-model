@@ -52,6 +52,25 @@ Denominator rule (rates and shares):
   differs from the slot's, report the mismatch there rather than forcing the
   figure.
 
+Representativeness rule (rates and shares offered as geography-wide figures):
+- When the slot asks for a rate across a whole geography, prefer nationally
+  representative evidence: registries, administrative/statistical-office data,
+  national surveys, health-system or industry-body statistics. A small cohort
+  or single-institution study is weak evidence for a national rate (such
+  samples are usually pre-selected for the behavior measured); if it is all
+  you can find, you may report it but MUST state the sample size and setting
+  in metric_definition so the limitation is visible.
+
+Price-slot source rule:
+- For price slots, the strongest sources are ADMINISTERED prices: statutory
+  reimbursement schedules and catalogs (e.g. an insurers' aids/devices
+  catalog), regulator or insurer fee schedules and tariff lists, procurement
+  and tender awards, and neutral price surveys. Seek these FIRST — they exist
+  to measure or administer prices, not to sell. Promotional pages, clinic
+  quotes, and "from €X" teaser pricing are produced to persuade and will be
+  rejected downstream; do not settle for them while an administered-price
+  source class remains unsearched.
+
 Disconfirmation rule:
 - If searching surfaced materially conflicting figures for this slot, report
   the conflict in metric_definition rather than silently selecting one.

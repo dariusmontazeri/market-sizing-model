@@ -31,7 +31,12 @@ import {
   type CraapValidationResult,
   type SlotDefinition,
 } from "./craapValidator";
-import { MAX_SEARCHES_FIRST, type ValidateFn } from "./researchLoop";
+import {
+  MAX_SEARCHES_FIRST,
+  type AssumptionFn,
+  type ProxySearchFn,
+  type ValidateFn,
+} from "./researchLoop";
 import { runStructuredBatch, type BatchClientLike } from "./batchRunner";
 import { runBackHalfSizing, type SizingRunResult } from "./orchestrator";
 import { cacheGet, slotCacheKey } from "./researchCache";
@@ -46,6 +51,10 @@ export type BatchSizingConfig = {
   // whole flow is deterministically testable offline. Default: the real calls.
   liveSearchFn?: SearchFn;
   liveValidateFn?: ValidateFn;
+  // Ladder rungs (V6.18) always run live (never batched — they are rare,
+  // per-slot escalations); injectable for offline tests.
+  liveProxySearchFn?: ProxySearchFn;
+  liveAssumptionFn?: AssumptionFn;
 };
 
 // CRAAP replay is keyed by the slot definition the loop hands validateFn —
@@ -154,7 +163,16 @@ export async function runBackHalfSizingBatched(
     return liveValidate(def, skeleton);
   };
 
-  return runBackHalfSizing(input, { searchFn, validateFn }, opts);
+  return runBackHalfSizing(
+    input,
+    {
+      searchFn,
+      validateFn,
+      proxySearchFn: cfg.liveProxySearchFn,
+      assumptionFn: cfg.liveAssumptionFn,
+    },
+    opts,
+  );
 }
 
 // Pin-gated batched dev entry — the bulk counterpart of runPinnedGermanySizing.

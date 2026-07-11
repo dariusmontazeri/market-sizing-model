@@ -1,0 +1,107 @@
+{
+  "ok": true,
+  "market": {
+    "country": "Germany",
+    "market": "prosthetics (prosthetic limb devices)"
+  },
+  "pinned": true,
+  "complete": false,
+  "incompleteReasons": [
+    "price: no source cleared CRAAP 0.7 across all tiers"
+  ],
+  "slots": [
+    {
+      "kind": "anchor",
+      "filterIndex": null,
+      "metric": "Annual count of qualifying events per year that the market \"prosthetics (prosthetic limb devices)\" descends from, before any narrowing filter",
+      "outcome": "resolved",
+      "resolved": true,
+      "rawValue": 62016,
+      "units": "amputations per year",
+      "normalizedRate": null,
+      "normalizationNote": null,
+      "source": {
+        "author_publisher": "Medicina (MDPI); primary data: Federal Statistical Office of Germany (Destatis)",
+        "source_url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8780615/"
+      },
+      "craapScore": 0.783,
+      "purposeGate": "pass",
+      "fromCache": true,
+      "unresolvedReason": null
+    },
+    {
+      "kind": "filter",
+      "filterIndex": 0,
+      "metric": "Rate kept by the narrowing cut \"Major-limb-segment filter (exclude minor/digit/partial amputations not fitted with a limb prosthesis)\" in Germany",
+      "outcome": "resolved",
+      "resolved": true,
+      "rawValue": 26.5,
+      "units": "percent",
+      "normalizedRate": 0.265,
+      "normalizationNote": "interpreted 26.5 percent as 0.265 (value > 1 -> percentage divided by 100)",
+      "source": {
+        "author_publisher": "Medicina (MDPI) — Kalt et al. 2022, citing Federal Statistical Office of Germany (Destatis)",
+        "source_url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8780615/"
+      },
+      "craapScore": 0.715,
+      "purposeGate": "pass",
+      "fromCache": true,
+      "unresolvedReason": null
+    },
+    {
+      "kind": "filter",
+      "filterIndex": 1,
+      "metric": "Rate kept by the narrowing cut \"Prosthetic fitting rate: share of major amputees actually fitted with a limb prosthesis\" in Germany",
+      "outcome": "resolved",
+      "resolved": true,
+      "rawValue": 96,
+      "units": "percent",
+      "normalizedRate": 0.96,
+      "normalizationNote": "interpreted 96 percent as 0.96 (value > 1 -> percentage divided by 100)",
+      "source": {
+        "author_publisher": "MDPI (Applied Sciences) — Brauckmann et al., Hannover Medical School",
+        "source_url": "https://www.mdpi.com/2076-3417/14/16/7274"
+      },
+      "craapScore": 0.774,
+      "purposeGate": "pass",
+      "fromCache": false,
+      "unresolvedReason": null
+    },
+    {
+      "kind": "price",
+      "filterIndex": null,
+      "metric": "Average price per device supplied for \"prosthetics (prosthetic limb devices)\" in Germany",
+      "outcome": "failed_threshold",
+      "resolved": false,
+      "rawValue": null,
+      "units": null,
+      "normalizedRate": null,
+      "normalizationNote": null,
+      "source": {
+        "author_publisher": null,
+        "source_url": null
+      },
+      "craapScore": 0.103,
+      "purposeGate": "pass",
+      "fromCache": false,
+      "unresolvedReason": "no source cleared CRAAP 0.7 across all tiers"
+    }
+  ],
+  "sizing": null,
+  "sizingInputs": null,
+  "assumptions": [
+    {
+      "field": "replacementRate",
+      "value": 0.2,
+      "basis": "EXPLICIT ASSUMPTION (not researched): recurring replacement/renewal revenue modeled as a fraction of the new-fitting SOM, at a 5-year replacement cadence (1/5 per year — the hand-done Germany benchmark's assumption). deriveResearchSlots derives no replacement-cadence slot yet, so this is a flagged, reasoned assumption pending a researched replacement layer. It is excluded from the credibility score and must not be read as sourced."
+    }
+  ],
+  "credibility": {
+    "score": 0.7573333333333334,
+    "basis": "PARTIAL — mean over resolved slots only; run is INCOMPLETE so this is not a whole-model score"
+  },
+  "usage": {
+    "inputTokens": 1600731,
+    "outputTokens": 35767
+  }
+}

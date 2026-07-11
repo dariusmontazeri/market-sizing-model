@@ -131,27 +131,54 @@ async function main() {
     check("replay winner is surfaced", r2.winnerAttempt === 1, r2.winnerAttempt);
   }
 
-  // === Case 3: sub-threshold outcome is NOT cached ===
-  console.log("\n=== Case 3: failed_threshold -> never cached ===");
+  // Ladder fakes (V6.18): the loop now descends failed/dead-end slots to the
+  // proxy and assumption rungs, so offline cases must inject them. The proxy
+  // dead-ends and the assumption yields — proving a FALLBACK value is never
+  // cached (only direct ACCEPTED results are).
+  const ladderFakes = {
+    proxySearchFn: async () => ({
+      skeleton: {
+        ...foundResult(0).skeleton,
+        value: null,
+        resolution_status: "dead_end" as const,
+        resolution_reason: "no comparable geography publishes this (fake)",
+        proxy_justification: "n/a",
+      },
+      model: "fake",
+      usage: { inputTokens: 0, outputTokens: 0 },
+      searchErrorCodes: [],
+      rateLimitBlocked: false,
+    }),
+    assumptionFn: async () => ({
+      assumption: { value: 1, units: "EUR", reasoning: "fake" },
+      model: "fake",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    }),
+  };
+
+  // === Case 3: sub-threshold direct outcome is NOT cached (ladder resolves) ===
+  console.log("\n=== Case 3: failed_threshold -> ladder resolves, NOTHING cached ===");
   {
     fs.rmSync(entryFile, { force: true });
     const c = counters(0.2); // CRAAP fails every tier
-    const r = await resolveSlotWithRetry(slot, { searchFn: c.searchFn, validateFn: c.validateFn });
-    check("outcome failed_threshold", r.outcome === "failed_threshold", r.outcome);
-    check("no cache entry written", !fs.existsSync(entryFile), fs.existsSync(entryFile));
+    const r = await resolveSlotWithRetry(slot, { searchFn: c.searchFn, validateFn: c.validateFn, ...ladderFakes });
+    check("directOutcome failed_threshold", r.directOutcome === "failed_threshold", r.directOutcome);
+    check("ladder resolved via assumption", r.outcome === "resolved_assumption", r.outcome);
+    check("no cache entry written (fallback values never cached)", !fs.existsSync(entryFile), fs.existsSync(entryFile));
   }
 
-  // === Case 4: dead_end is NOT cached ===
-  console.log("\n=== Case 4: dead_end -> never cached ===");
+  // === Case 4: dead_end is NOT cached (ladder resolves) ===
+  console.log("\n=== Case 4: dead_end -> ladder resolves, NOTHING cached ===");
   {
     const searchFn: SearchFn = async () => ({
       ...foundResult(0),
       skeleton: { ...foundResult(0).skeleton, value: null, resolution_status: "dead_end", resolution_reason: "not published (fake)" },
     });
     const c = counters(0.9);
-    const r = await resolveSlotWithRetry(slot, { searchFn, validateFn: c.validateFn });
-    check("outcome dead_end", r.outcome === "dead_end", r.outcome);
-    check("no cache entry written", !fs.existsSync(entryFile), fs.existsSync(entryFile));
+    const r = await resolveSlotWithRetry(slot, { searchFn, validateFn: c.validateFn, ...ladderFakes });
+    check("directOutcome dead_end", r.directOutcome === "dead_end", r.directOutcome);
+    check("ladder resolved via assumption", r.outcome === "resolved_assumption", r.outcome);
+    check("no cache entry written (fallback values never cached)", !fs.existsSync(entryFile), fs.existsSync(entryFile));
   }
 
   // === Case 5: stale entry below the threshold gate is a MISS ===

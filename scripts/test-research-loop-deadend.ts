@@ -1,20 +1,23 @@
-// Deterministic, OFFLINE proof of the THREE failure classes routing correctly in
-// the research loop, with the early-stop-on-dead-end class (Slice 3) as the focus.
-// Zero API calls, zero cost: the search and CRAAP calls are injected fakes, so the
-// loop's REAL routing logic runs against simulated researcher outputs.
+// Deterministic, OFFLINE proof of the RESOLUTION LADDER (V6.18) routing
+// correctly in the research loop: direct research -> declared geography proxy
+// -> reasoned assumption, with rate limiting as the ONLY non-value outcome.
+// Zero API calls, zero cost: search, proxy, CRAAP, and assumption calls are
+// injected fakes, so the loop's REAL routing logic runs against simulated
+// component outputs.
 //
-// The three classes, each its own handler, no collision:
-//   blocked   -> backoff + retry the SAME tier (no descent, no CRAAP attempt)
-//   CRAAP-fail-> descend a tier (a fresh source at lower authority)
-//   dead_end  -> STOP and route to the assumption-fallback seam (no CRAAP, no number)
+// The classes, each its own handler, no collision:
+//   blocked    -> backoff + retry the SAME tier (no descent, no CRAAP attempt)
+//   CRAAP-fail -> full tier descent, then LADDER: proxy rung (here it PASSES)
+//   dead_end   -> STOP direct research immediately, LADDER: proxy dead-ends
+//                 too -> assumption rung yields a flagged value
+//   rate-limit -> halt; the ladder is NOT descended (infrastructure, not
+//                 judgment — no assumption may be fabricated from a throttle)
 //
-// The block case exercises the REAL spacing + backoff sleeps (~4s here: 1 block +
-// 1 recovery), so this script takes a few seconds of wall time. The CRAAP-fail and
-// dead_end cases never block, so they incur only the 2s pre-search spacing each.
-//
-// Run: npx tsx scripts/test-research-loop-deadend.ts   (no env / no API key needed)
-import { resolveSlotWithRetry, type ValidateFn } from "../lib/researchLoop";
+// The loop's real spacing/backoff sleeps run here, so this script takes ~30s
+// of wall time. Run: npx tsx scripts/test-research-loop-deadend.ts
+import { resolveSlotWithRetry, type ValidateFn, type ProxySearchFn, type AssumptionFn } from "../lib/researchLoop";
 import type {
+  ProxyCallResult,
   ResearchSkeleton,
   ResearchSlot,
   SearchFn,
@@ -70,7 +73,7 @@ const goodSkeleton = (): ResearchSkeleton => ({
 });
 
 // A `miss` source carrying a figure CRAAP will reject. resolution_status is
-// "miss", NOT dead_end — it must flow to CRAAP and tier descent, never the seam.
+// "miss", NOT dead_end — it must flow to CRAAP and tier descent.
 const weakSkeleton = (): ResearchSkeleton => ({
   search_query: "avg price germany blog",
   value: 999,
@@ -136,6 +139,37 @@ const deadEnd = {
   rateLimitBlocked: false,
 };
 
+// --- fake proxy results -----------------------------------------------------
+
+const PROXY_JUSTIFICATION =
+  "Sweden's single-payer prosthetics reimbursement is structurally comparable to Germany's statutory system.";
+
+const proxyGood: ProxyCallResult = {
+  skeleton: {
+    ...goodSkeleton(),
+    geography: "Sweden",
+    author_publisher: "Fake Swedish Registry",
+    source_url: "https://example.org/se",
+    value: 777,
+    proxy_justification: PROXY_JUSTIFICATION,
+  },
+  model: "fake",
+  usage: { inputTokens: 1, outputTokens: 1 },
+  searchErrorCodes: [],
+  rateLimitBlocked: false,
+};
+
+const proxyDead: ProxyCallResult = {
+  skeleton: {
+    ...deadEndSkeleton(),
+    proxy_justification: "no comparable geography publishes this either",
+  },
+  model: "fake",
+  usage: { inputTokens: 1, outputTokens: 1 },
+  searchErrorCodes: [],
+  rateLimitBlocked: false,
+};
+
 // --- fake CRAAP -----------------------------------------------------------
 
 function fakeCraap(opts: { pass: boolean }): CraapValidationResult {
@@ -172,13 +206,53 @@ function countingValidate(pass: boolean): { fn: ValidateFn; calls: () => number 
   return { fn, calls: () => n };
 }
 
+// Passes ONLY proxy-geography definitions (used to prove the proxy is graded
+// against its OWN geography while direct Germany attempts keep failing).
+function geoAwareValidate(): { fn: ValidateFn; calls: () => number; proxyDefs: () => number } {
+  let n = 0;
+  let proxyDefs = 0;
+  const fn: ValidateFn = async (def) => {
+    n++;
+    const isProxyDef = def.geography === "Sweden" && def.definition.includes("DECLARED GEOGRAPHY PROXY");
+    if (isProxyDef) proxyDefs++;
+    return fakeCraap({ pass: isProxyDef });
+  };
+  return { fn, calls: () => n, proxyDefs: () => proxyDefs };
+}
+
+function countingAssume(value: number): { fn: AssumptionFn; calls: () => number } {
+  let n = 0;
+  const fn: AssumptionFn = async () => {
+    n++;
+    return {
+      assumption: {
+        value,
+        units: "EUR",
+        reasoning: "fake first-principles estimate; conservative end of the defensible range",
+      },
+      model: "fake",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    };
+  };
+  return { fn, calls: () => n };
+}
+
+function neverProxy(): { fn: ProxySearchFn; calls: () => number } {
+  let n = 0;
+  const fn: ProxySearchFn = async () => {
+    n++;
+    return proxyGood;
+  };
+  return { fn, calls: () => n };
+}
+
 // === Class 1: blocked -> SAME-tier retry (no descent, no CRAAP attempt) =====
 async function caseBlocked() {
   console.log(
     "\n=== Class 1 (blocked): block -> backoff -> SAME-tier retry -> recover -> CRAAP ===",
   );
   console.log(
-    "Prediction: 1 search round at tier 1; 2 search calls; status searched; CRAAP once; resolved.\n",
+    "Prediction: 1 search round at tier 1; 2 search calls; status searched; CRAAP once; resolved; ladder untouched.\n",
   );
 
   let searchCalls = 0;
@@ -187,114 +261,143 @@ async function caseBlocked() {
     return searchCalls === 1 ? blocked : recovered;
   };
   const craap = countingValidate(true);
+  const proxy = neverProxy();
+  const assume = countingAssume(0);
 
-  const r = await resolveSlotWithRetry(SLOT, { searchFn, validateFn: craap.fn });
+  const r = await resolveSlotWithRetry(SLOT, {
+    searchFn, validateFn: craap.fn, proxySearchFn: proxy.fn, assumptionFn: assume.fn,
+  });
   console.log("  searchRounds:", JSON.stringify(r.searchRounds));
-  console.log(
-    "  outcome:", r.outcome, "| attempts:", r.attempts.length,
-    "| craapCalls:", craap.calls(), "| assumptionSeam:", r.assumptionSeam,
-  );
+  console.log("  outcome:", r.outcome, "| attempts:", r.attempts.length, "| craapCalls:", craap.calls());
 
   check("1 search round (no tier descent on a block)", r.searchRounds.length === 1, r.searchRounds.length);
   check("tier 1 made 2 search calls (1 block + 1 retry)", r.searchRounds[0]?.searchCalls === 2, r.searchRounds[0]?.searchCalls);
   check('round status "searched" after recovery', r.searchRounds[0]?.status === "searched", r.searchRounds[0]?.status);
   check("handed to CRAAP exactly once", craap.calls() === 1, craap.calls());
   check("outcome resolved", r.outcome === "resolved", r.outcome);
-  check("deadEnd false", r.deadEnd === false, r.deadEnd);
-  check("assumptionSeam null (not a dead end)", r.assumptionSeam === null, r.assumptionSeam);
+  check('directOutcome "resolved"', r.directOutcome === "resolved", r.directOutcome);
+  check("ladder untouched (no proxy call, no assumption call)", proxy.calls() === 0 && assume.calls() === 0, { proxy: proxy.calls(), assume: assume.calls() });
+  check("proxy and assumption fields null", r.proxy === null && r.assumption === null, { proxy: r.proxy, assumption: r.assumption });
 }
 
-// === Class 2: CRAAP-fail -> tier descent (a `miss` is NOT a dead end) =======
-async function caseCraapFail() {
+// === Class 2: CRAAP-fail -> full descent -> LADDER: proxy PASSES ============
+async function caseCraapFailThenProxy() {
   console.log(
-    "\n=== Class 2 (CRAAP-fail): every tier fails CRAAP -> full descent -> failed_threshold ===",
+    "\n=== Class 2 (CRAAP-fail): both direct attempts fail -> proxy rung PASSES -> resolved_proxy ===",
   );
   console.log(
-    "Prediction: 3 search rounds (tiers 1,2,3); 3 CRAAP calls; outcome failed_threshold;\n" +
-      "            a `miss` never routes to the seam (assumptionSeam null, deadEnd false).\n",
+    "Prediction: 2 direct rounds (tiers 1,2) both sub-threshold; proxy searched once; proxy CRAAP\n" +
+      "            graded against Sweden with the proxy note; outcome resolved_proxy; assumption never called.\n",
   );
 
-  let searchCalls = 0;
-  const searchFn: SearchFn = async () => {
-    searchCalls++;
-    return weak; // always a miss-with-figure that CRAAP rejects
+  const searchFn: SearchFn = async () => weak; // every direct attempt is a rejectable miss
+  const craap = geoAwareValidate(); // fails Germany defs, passes the Sweden proxy def
+  let proxyCalls = 0;
+  const proxyFn: ProxySearchFn = async () => {
+    proxyCalls++;
+    return proxyGood;
   };
-  const craap = countingValidate(false);
+  const assume = countingAssume(0);
 
-  const r = await resolveSlotWithRetry(SLOT, { searchFn, validateFn: craap.fn });
-  console.log("  searchRounds:", JSON.stringify(r.searchRounds.map((s) => ({ tier: s.tier, status: s.status }))));
-  console.log(
-    "  outcome:", r.outcome, "| attempts:", r.attempts.length,
-    "| craapCalls:", craap.calls(), "| searchFn calls:", searchCalls,
-    "| assumptionSeam:", r.assumptionSeam,
-  );
+  const r = await resolveSlotWithRetry(SLOT, {
+    searchFn, validateFn: craap.fn, proxySearchFn: proxyFn, assumptionFn: assume.fn,
+  });
+  console.log("  outcome:", r.outcome, "| directOutcome:", r.directOutcome, "| proxy passed:", r.proxy?.passed);
 
-  check("3 search rounds (descended through all tiers)", r.searchRounds.length === 3, r.searchRounds.length);
-  check("tiers descended 1 -> 2 -> 3", JSON.stringify(r.searchRounds.map((s) => s.tier)) === "[1,2,3]", r.searchRounds.map((s) => s.tier));
-  check("3 CRAAP attempts (a miss IS scored)", r.attempts.length === 3 && craap.calls() === 3, { attempts: r.attempts.length, craap: craap.calls() });
-  check("outcome failed_threshold (quality, not dead end)", r.outcome === "failed_threshold", r.outcome);
-  check("a `miss` did NOT route to the seam", r.assumptionSeam === null, r.assumptionSeam);
-  check("deadEnd false for a miss", r.deadEnd === false, r.deadEnd);
+  check("2 direct search rounds (budget 1 + 1 earned)", r.searchRounds.length === 2, r.searchRounds.length);
+  check('directOutcome "failed_threshold"', r.directOutcome === "failed_threshold", r.directOutcome);
+  check("proxy rung called exactly once", proxyCalls === 1, proxyCalls);
+  check("proxy CRAAP graded against the PROXY geography def", craap.proxyDefs() === 1, craap.proxyDefs());
+  check("3 CRAAP calls total (2 direct + 1 proxy)", craap.calls() === 3, craap.calls());
+  check('outcome "resolved_proxy"', r.outcome === "resolved_proxy", r.outcome);
+  check("proxy record present and passed", r.proxy !== null && r.proxy.passed === true, r.proxy?.passed);
+  check("proxy value carried (777, Sweden)", r.proxy?.skeleton.value === 777 && r.proxy?.skeleton.geography === "Sweden", { value: r.proxy?.skeleton.value, geo: r.proxy?.skeleton.geography });
+  check("proxy justification carried", r.proxy?.skeleton.proxy_justification === PROXY_JUSTIFICATION, r.proxy?.skeleton.proxy_justification);
+  check("proxy directFailure names the threshold failure", r.proxy?.directFailure.includes("no direct source cleared") === true, r.proxy?.directFailure);
+  check("assumption rung never reached", assume.calls() === 0 && r.assumption === null, assume.calls());
+  check("winnerAttempt null (no direct winner surfaced)", r.winnerAttempt === null, r.winnerAttempt);
+  check("resolved flag false (resolved means DIRECT)", r.resolved === false, r.resolved);
 }
 
-// === Class 3: dead_end -> seam (no further attempts, no number) =============
-async function caseDeadEnd() {
+// === Class 3: dead_end -> proxy dead-ends too -> ASSUMPTION =================
+async function caseDeadEndToAssumption() {
   console.log(
-    "\n=== Class 3 (dead_end): researcher dead-ends -> STOP -> assumption-fallback seam ===",
+    "\n=== Class 3 (dead_end): direct dead-ends -> proxy dead-ends -> reasoned assumption ===",
   );
   console.log(
-    "Prediction: 1 search round; searchFn called exactly ONCE (no descent to tier 2/3 even\n" +
-      "            though a later call WOULD pass); CRAAP never called; 0 attempts; outcome dead_end;\n" +
-      "            seam emitted with value null and the researcher's reason; NO numeric value anywhere.\n",
+    "Prediction: direct searched exactly ONCE (no descent past a dead end), CRAAP never called on it;\n" +
+      "            proxy searched once, dead-ends, CRAAP never called on it; assumption yields 555;\n" +
+      "            outcome resolved_assumption; the dead-end skeletons' 4321 never surfaces.\n",
   );
 
-  // First call dead-ends; any later call would return a CRAAP-passing source.
-  // So if the loop wrongly fell through to descent, outcome would become resolved
-  // — the assertions below would catch it.
   let searchCalls = 0;
   const searchFn: SearchFn = async () => {
     searchCalls++;
-    return searchCalls === 1 ? deadEnd : recovered;
+    return searchCalls === 1 ? deadEnd : recovered; // descent past the dead end would wrongly resolve
   };
   const craap = countingValidate(true);
+  let proxyCalls = 0;
+  const proxyFn: ProxySearchFn = async () => {
+    proxyCalls++;
+    return proxyDead;
+  };
+  const assume = countingAssume(555);
 
-  const r = await resolveSlotWithRetry(SLOT, { searchFn, validateFn: craap.fn });
-  console.log("  searchRounds:", JSON.stringify(r.searchRounds));
+  const r = await resolveSlotWithRetry(SLOT, {
+    searchFn, validateFn: craap.fn, proxySearchFn: proxyFn, assumptionFn: assume.fn,
+  });
+  console.log("  outcome:", r.outcome, "| directOutcome:", r.directOutcome);
+  console.log("  assumption:", JSON.stringify(r.assumption));
+
+  check('directOutcome "dead_end"', r.directOutcome === "dead_end", r.directOutcome);
+  check("direct searched exactly ONCE (no descent past the dead end)", searchCalls === 1, searchCalls);
+  check("proxy rung tried once", proxyCalls === 1, proxyCalls);
+  check("CRAAP never called (no gradeable source on either rung)", craap.calls() === 0, craap.calls());
+  check("assumption rung called once", assume.calls() === 1, assume.calls());
+  check('outcome "resolved_assumption"', r.outcome === "resolved_assumption", r.outcome);
+  check("assumption value 555 carried", r.assumption?.value === 555, r.assumption?.value);
+  check("assumption reasoning carried", typeof r.assumption?.reasoning === "string" && r.assumption.reasoning.length > 0, r.assumption?.reasoning);
+  check("ladderTrace names BOTH rung failures", r.assumption?.ladderTrace.includes("dead-ended") === true && r.assumption?.ladderTrace.includes("proxy") === true, r.assumption?.ladderTrace);
+  check("proxy record present but not passed (craap null)", r.proxy !== null && r.proxy.passed === false && r.proxy.craap === null, { passed: r.proxy?.passed, craap: r.proxy?.craap });
+  check("winnerAttempt null — the 4321 never surfaces", r.winnerAttempt === null, r.winnerAttempt);
+  check("0 direct CRAAP attempts recorded", r.attempts.length === 0, r.attempts.length);
+}
+
+// === Class 4: rate-limited -> HALT; the ladder is NOT descended =============
+async function caseRateLimitedNoLadder() {
   console.log(
-    "  outcome:", r.outcome, "| attempts:", r.attempts.length,
-    "| craapCalls:", craap.calls(), "| searchFn calls:", searchCalls,
-    "| winnerAttempt:", r.winnerAttempt,
+    "\n=== Class 4 (rate-limited): search stays blocked -> halt; NO proxy, NO assumption ===",
   );
-  console.log("  assumptionSeam:", JSON.stringify(r.assumptionSeam));
+  console.log(
+    "Prediction: backoff budget exhausted; outcome rate_limited; proxyFn and assumptionFn NEVER called\n" +
+      "            (an infrastructure failure must not be laundered into a fabricated assumption).\n",
+  );
 
-  // routes to the seam
-  check("outcome dead_end", r.outcome === "dead_end", r.outcome);
-  check("deadEnd flag true", r.deadEnd === true, r.deadEnd);
-  check("assumptionSeam present", r.assumptionSeam !== null, r.assumptionSeam !== null);
-  check('seam kind "assumption_fallback_pending"', r.assumptionSeam?.kind === "assumption_fallback_pending", r.assumptionSeam?.kind);
-  check("seam carries the researcher's resolution_reason", r.assumptionSeam?.resolutionReason === DEAD_END_REASON, r.assumptionSeam?.resolutionReason);
-  check("seam labels the slot loudly", typeof r.assumptionSeam?.slotLabel === "string" && r.assumptionSeam.slotLabel.includes(SLOT.metric), r.assumptionSeam?.slotLabel);
+  const searchFn: SearchFn = async () => blocked; // never recovers
+  const craap = countingValidate(true);
+  const proxy = neverProxy();
+  const assume = countingAssume(0);
 
-  // (a) consumes no additional attempts AFTER the dead_end verdict
-  check("(a) searchFn called exactly ONCE (no tier descent past the dead end)", searchCalls === 1, searchCalls);
-  check("(a) only 1 search round", r.searchRounds.length === 1, r.searchRounds.length);
-  check("(a) CRAAP never called (no source to score)", craap.calls() === 0, craap.calls());
-  check("(a) 0 CRAAP attempts recorded", r.attempts.length === 0, r.attempts.length);
-  check("(a) did NOT fall through to resolved despite a passing source waiting", r.outcome !== "resolved", r.outcome);
+  const r = await resolveSlotWithRetry(SLOT, {
+    searchFn, validateFn: craap.fn, proxySearchFn: proxy.fn, assumptionFn: assume.fn,
+  });
+  console.log("  outcome:", r.outcome, "| directOutcome:", r.directOutcome);
 
-  // (b) emits no numeric value — even though the dead_end skeleton carried 4321
-  check("(b) seam value is null (no figure)", r.assumptionSeam?.value === null, r.assumptionSeam?.value);
-  check("(b) winnerAttempt null (no figure surfaced)", r.winnerAttempt === null, r.winnerAttempt);
-  check("(b) not resolved / not rate_limited / not failed_threshold", !r.resolved && !r.rateLimited && !r.failedThreshold, { resolved: r.resolved, rateLimited: r.rateLimited, failedThreshold: r.failedThreshold });
+  check('outcome "rate_limited"', r.outcome === "rate_limited", r.outcome);
+  check("rateLimited flag true", r.rateLimited === true, r.rateLimited);
+  check("proxy rung NOT descended", proxy.calls() === 0 && r.proxy === null, proxy.calls());
+  check("assumption rung NOT descended", assume.calls() === 0 && r.assumption === null, assume.calls());
+  check("CRAAP never called", craap.calls() === 0, craap.calls());
 }
 
 async function main() {
   console.log(
-    "Deterministic offline proof of the 3 failure classes — focus: early-stop-on-dead-end (ZERO API calls)",
+    "Deterministic offline proof of the RESOLUTION LADDER (V6.18) — ZERO API calls",
   );
   await caseBlocked();
-  await caseCraapFail();
-  await caseDeadEnd();
+  await caseCraapFailThenProxy();
+  await caseDeadEndToAssumption();
+  await caseRateLimitedNoLadder();
   console.log(`\n${failures === 0 ? "ALL CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);
   process.exit(failures === 0 ? 0 : 1);
 }

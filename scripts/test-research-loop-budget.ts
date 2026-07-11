@@ -142,25 +142,45 @@ async function caseEarnEscalation() {
   check("keep-best picked the passing escalated attempt (2)", r.winnerAttempt === 2, r.winnerAttempt);
 }
 
-// === Case C: all attempts fail -> keep-best returns the highest-blend source ===
+// === Case C: all attempts fail -> ladder engages (V6.18) =====================
 async function caseKeepBestAmongFails() {
-  console.log("\n=== Case C: every attempt fails CRAAP -> keep-best = highest blend ===");
-  console.log("Prediction: 3 rounds, maxSearches [3,5,5], outcome failed_threshold, winner = attempt 2 (blend 0.6).\n");
+  console.log("\n=== Case C: every attempt fails CRAAP -> full descent -> resolution ladder ===");
+  console.log("Prediction: 2 rounds (budget 1 + 1 earned), maxSearches [3,5], directOutcome failed_threshold;\n" +
+    "            the ladder then runs (fake proxy dead-ends, fake assumption yields) -> resolved_assumption.\n");
 
   const search = recordingSearch();
-  const blends = [0.4, 0.6, 0.5]; // all < 0.7; the middle attempt is best
+  const blends = [0.4, 0.6]; // all < 0.7
   let c = 0;
   const validate: ValidateFn = async () => craap(blends[c++]);
-  const r = await resolveSlotWithRetry(SLOT, { searchFn: search.fn, validateFn: validate });
+  // Ladder fakes so the budget test stays offline: proxy dead-ends, assumption yields.
+  const proxySearchFn = async () => ({
+    skeleton: {
+      ...sourceResult("Proxy-Publisher").skeleton,
+      resolution_status: "dead_end" as const,
+      resolution_reason: "no comparable geography publishes this (fake)",
+      proxy_justification: "n/a",
+    },
+    model: "fake",
+    usage: { inputTokens: 0, outputTokens: 0 },
+    searchErrorCodes: [],
+    rateLimitBlocked: false,
+  });
+  const assumptionFn = async () => ({
+    assumption: { value: 1, units: "EUR", reasoning: "fake" },
+    model: "fake",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  });
+  const r = await resolveSlotWithRetry(SLOT, { searchFn: search.fn, validateFn: validate, proxySearchFn, assumptionFn });
 
   console.log("  maxSearches per attempt:", JSON.stringify(search.maxSearches()));
-  console.log("  blends:", JSON.stringify(r.attempts.map((a) => a.blendedScore)), "| outcome:", r.outcome, "| winner:", r.winnerAttempt);
+  console.log("  blends:", JSON.stringify(r.attempts.map((a) => a.blendedScore)), "| outcome:", r.outcome, "| directOutcome:", r.directOutcome);
 
-  check("3 search rounds (full descent on repeated CRAAP fail)", r.searchRounds.length === 3, r.searchRounds.length);
-  check("ceiling: [3,5,5]", JSON.stringify(search.maxSearches()) === "[3,5,5]", search.maxSearches());
-  check("outcome failed_threshold", r.outcome === "failed_threshold", r.outcome);
-  check("keep-best = highest-blend attempt (2, blend 0.6)", r.winnerAttempt === 2, r.winnerAttempt);
-  check("not resolved, no dead end", r.resolved === false && r.deadEnd === false, { resolved: r.resolved, deadEnd: r.deadEnd });
+  check("2 direct search rounds (budget 1 + 1 earned; V6.18 dropped the tier-3 pass)", r.searchRounds.length === 2, r.searchRounds.length);
+  check("ceiling: [3,5] (proxy round not in searchRounds)", JSON.stringify(search.maxSearches()) === "[3,5]", search.maxSearches());
+  check("directOutcome failed_threshold", r.directOutcome === "failed_threshold", r.directOutcome);
+  check("ladder terminal: outcome resolved_assumption", r.outcome === "resolved_assumption", r.outcome);
+  check("both failing attempts kept in the log (best blend 0.6 visible)", r.attempts.length === 2 && Math.max(...r.attempts.map((a) => a.blendedScore)) === 0.6, r.attempts.map((a) => a.blendedScore));
+  check("no direct winner surfaced (winner only on resolved)", r.winnerAttempt === null && r.resolved === false, { winner: r.winnerAttempt, resolved: r.resolved });
 }
 
 async function main() {

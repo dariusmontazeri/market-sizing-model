@@ -172,8 +172,33 @@ async function caseFull() {
   let liveValidations = 0;
   const liveSearchFn: SearchFn = async () => { liveSearches++; return liveFound(0.55); };
   const liveValidateFn: ValidateFn = async () => { liveValidations++; return liveCraap(0.92); };
+  // Ladder fakes (V6.18): the dead-end price descends the ladder LIVE — the
+  // proxy rung dead-ends too, the assumption rung yields a flagged 3000 EUR.
+  let proxyCalls = 0;
+  let assumptionCalls = 0;
+  const liveProxySearchFn = async () => {
+    proxyCalls++;
+    return {
+      skeleton: {
+        ...(JSON.parse(skeletonJson(null, { value: null, resolution_status: "dead_end", resolution_reason: "no comparable geography publishes this (fake)" })) as ResearcherCallResult["skeleton"]),
+        proxy_justification: "n/a",
+      },
+      model: "fake",
+      usage: { inputTokens: 0, outputTokens: 0 },
+      searchErrorCodes: [],
+      rateLimitBlocked: false,
+    };
+  };
+  const liveAssumptionFn = async () => {
+    assumptionCalls++;
+    return {
+      assumption: { value: 3000, units: "EUR", reasoning: "fake first-principles price estimate" },
+      model: "fake",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  };
 
-  const r = await runPinnedGermanySizingBatched({ client, sleeper: async () => {}, liveSearchFn, liveValidateFn });
+  const r = await runPinnedGermanySizingBatched({ client, sleeper: async () => {}, liveSearchFn, liveValidateFn, liveProxySearchFn, liveAssumptionFn });
 
   check("3 batch submissions (R wave 1, R wave 2, CRAAP wave)", submissions.length === 3, submissions.length);
   check("R wave 1 batched all 4 slots", submissions[0].length === 4, submissions[0].length);
@@ -190,7 +215,10 @@ async function caseFull() {
   check("anchor resolved from batch (continuation path)", r.slots.find((s) => s.kind === "anchor")?.rawValue === 6000, r.slots.find((s) => s.kind === "anchor")?.rawValue);
   check("filter[0] resolved from batch (retry path)", r.slots.find((s) => s.filterIndex === 0)?.rawValue === 0.6, r.slots.find((s) => s.filterIndex === 0)?.rawValue);
   const price = r.slots.find((s) => s.kind === "price");
-  check("dead-end price routed to seam (INCOMPLETE, no zero-fill)", r.complete === false && price?.outcome === "dead_end" && price?.rawValue === null && r.sizing === null, { complete: r.complete, outcome: price?.outcome });
+  check("dead-end price descended the ladder LIVE (1 proxy try, 1 assumption)", proxyCalls === 1 && assumptionCalls === 1, { proxyCalls, assumptionCalls });
+  check("price resolved via assumption (3000, flagged)", price?.outcome === "resolved_assumption" && price?.resolution === "assumption" && price?.rawValue === 3000, { outcome: price?.outcome, raw: price?.rawValue });
+  check("run COMPLETE — the ladder never ends empty-handed", r.complete === true && r.sizing !== null, { complete: r.complete });
+  check("price flagged in assumptions, excluded from credibility", r.assumptions.some((a) => a.field === "price" && a.value === 3000) && r.credibility.basis.includes("DIRECTLY SOURCED"), r.assumptions.map((a) => a.field));
 }
 
 async function caseCacheAware() {
