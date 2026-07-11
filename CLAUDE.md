@@ -30,7 +30,7 @@ object is deferred (build focus is the tool itself).
   (anchor_appropriate, gap_check_grade, semantic_double_count,
   distinctions_genuine, price_basis_match, filter_narrows_demand). Code rolls
   up the verdict; a fail bounces the structure to the proposer.
-- Researcher (`lib/researcher.ts`, Sonnet 5): resolves ONE slot per isolated
+- Researcher (`lib/researcher.ts`, Sonnet 4.6): resolves ONE slot per isolated
   call with live web_search (ceiling 3 on the first attempt / 5 escalated,
   floored at 3 — trace-back is search-hungry). Structured-output skeleton:
   every field present or explicit null (a null is a flag, never a guess).
@@ -41,16 +41,16 @@ object is deferred (build focus is the tool itself).
   rule: a rate over a different base is reported as a mismatch, never forced.
   Disconfirmation: conflicting figures reported, never dropped. Typed
   resolution_status found|miss|dead_end (dead_end only with positive evidence).
-- CRAAP validator (`lib/craapValidator.ts`, Sonnet 5): grades a filled skeleton
-  cold — own call, sees ONLY slot definition + skeleton, no web. Model emits
-  0-1 dimension scores (metric_match explicitly tests DENOMINATOR-match) and a
-  Purpose gate; relevance mean + weighted total computed in CODE with locked
-  weights (Authority .30, Relevance .30, Currency .25, Accuracy .15).
+- CRAAP validator (`lib/craapValidator.ts`, Sonnet 4.6): grades a filled
+  skeleton cold — own call, sees ONLY slot definition + skeleton, no web. Model
+  emits 0-1 dimension scores (metric_match explicitly tests DENOMINATOR-match)
+  and a Purpose gate; relevance mean + weighted total computed in CODE with
+  locked weights (Authority .30, Relevance .30, Currency .25, Accuracy .15).
   CRAAP_THRESHOLD = 0.7 lives here, applied by the loop — CRAAP scores, never
-  routes. NOTE: the as-built Purpose GATE (a fail disqualifies the source in
-  the loop) is stricter than planner V6.5 ("informational flag, no gate in
-  v1"); it caught the promotional price sources on the real run. Doc-vs-code
-  conflict pending a planner decision — the code behavior stands until then.
+  routes. Purpose gate RULED (planner V6.17.1, supersedes V6.5): the gate
+  stands, calibrated for price slots — commercial CONTEXT never fails
+  (reimbursement schedules, tariffs, procurement data pass); only
+  intent-to-persuade fails (teaser pricing, lead-gen quotes). Measure vs sell.
 - Code: research loop (`lib/researchLoop.ts`) — attempt budget DEFAULT 1, earn
   2 more only on a sub-0.7 CRAAP verdict; tier descent (attempt N targets tier
   N) + keep-best; web_search spacing (~2s) + exponential backoff (2/4/8)
@@ -66,11 +66,12 @@ object is deferred (build focus is the tool itself).
   (scripts/pinned-germany.result.json, INCOMPLETE — honesty gates held).
 
 ### Shared infrastructure
-- `lib/models.ts`: per-component model config, the ONLY place a model is named.
-  Proposer + structural validator = claude-opus-4-8; researcher + CRAAP =
-  claude-sonnet-5 (Sonnet 4.6 lacks documented structured-outputs support;
-  Sonnet 5 is the same list price and supports the same web_search tool).
-  Sonnet verified live on CRAAP (scripts/smoke-craap-live.ts, 8/8).
+- `lib/models.ts`: per-component model config, the ONLY place a model is named
+  (planner V6.17.3). Judgment components (proposer + structural validator) =
+  claude-opus-4-8; execution components (researcher + CRAAP) =
+  claude-sonnet-4-6 (structured outputs confirmed on the 4.6 family; verified
+  live on CRAAP via scripts/smoke-craap-live.ts, 8/8). claude-sonnet-5 is the
+  one-line per-component fallback if 4.6 quality disappoints at Germany.
 - `lib/anthropic.ts`: shared structured-call plumbing for all four components
   (client, pause_turn continuations, text extraction, JSON parse + output
   guard) + the reliability layer: the two formerly-deferred failure classes
@@ -88,9 +89,11 @@ object is deferred (build focus is the tool itself).
   resolved slot's skeleton + CRAAP score stored together; a hit replays both
   with ZERO live calls and zero usage and is marked fromCache (surfaced in the
   result view — a replay is transparently a prior run). Entries are re-gated
-  against CRAAP_THRESHOLD in code at read time. Cheaper and faster, never
-  smarter: it does not train on its own runs. Offline-proven
-  (scripts/test-research-cache.ts 16/16).
+  against CRAAP_THRESHOLD in code at read time AND expire after
+  RESEARCH_CACHE_TTL_DAYS (default 30, planner V6.17.2) — a stale entry is a
+  miss, so years-old data can never replay as current. Cheaper and faster,
+  never smarter: it does not train on its own runs. Offline-proven
+  (scripts/test-research-cache.ts 19/19).
 - Dev structure pin (`lib/structurePin.ts`, PIN_STRUCTURE env flag, OFF by
   default and in prod): loads the VALIDATED 2-filter Germany structure straight
   into the loop, bypassing proposer + validator — a dev affordance only; the
@@ -102,6 +105,11 @@ object is deferred (build focus is the tool itself).
   scripts/structure-pin.3filter-rejected.ts.txt pending a decision; the
   validated 2-filter pin stands. Re-validate the pin whenever it or the
   validator changes (scripts/validate-pinned-structure.ts, one live call).
+  CONTEXT (V6.17.5, open): the hand benchmark was built for a specific client
+  whose device class is mobility-grade gated; a GENERAL prosthetics sizing has
+  no such cut, which is consistent with the gate's rejection of the 3-filter
+  split. Benchmark-scope decision (general market vs client-scoped market vs
+  both) is open in the planner.
 
 ### Phase 4 open items
 - Known-hard slots from the real run: filter[1] (candidacy rate, CRAAP 0.153)
@@ -126,7 +134,9 @@ object is deferred (build focus is the tool itself).
 3. UI render of the scored result object + its API route.
 4. Other three methods, then the router, then pre-launch hardening (hosted
    cache/KV, global cap + per-user cooldown, injection battery, key rotation,
-   Vercel bot-protection resolution).
+   Vercel bot-protection resolution). Cost lever noted for the multi-market /
+   showcase phase: Batches API wave architecture (50% cheaper, isolation
+   preserved — planner V6.17.4); not for the interactive path.
 
 The full spec is the planning doc (Drive, V6.16; local extract in the repo is
 gitignored) — source of truth.

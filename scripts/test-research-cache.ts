@@ -174,6 +174,35 @@ async function main() {
     check("result is the fresh live value, not the stale one", r.attempts[0]?.skeleton.value === 6000 && !r.fromCache, r.attempts[0]?.skeleton.value);
   }
 
+  // === Case 6: TTL — an entry older than the TTL is STALE and re-researches ===
+  console.log("\n=== Case 6: entry older than TTL -> stale MISS; within TTL -> hit ===");
+  {
+    const fortyDaysAgo = new Date(Date.now() - 40 * 86_400_000).toISOString();
+    const oldEntry = {
+      cachedAt: fortyDaysAgo,
+      slotKey: slotCacheKey(slot),
+      skeleton: foundResult(4242).skeleton,
+      craap: craap(0.9),
+      researcherModel: "fake",
+    };
+    fs.writeFileSync(entryFile, JSON.stringify(oldEntry), "utf8");
+
+    // Default TTL (30 days): 40-day-old entry must MISS -> live research runs.
+    delete process.env.RESEARCH_CACHE_TTL_DAYS;
+    const c1 = counters(0.9);
+    const r1 = await resolveSlotWithRetry(slot, { searchFn: c1.searchFn, validateFn: c1.validateFn });
+    check("40-day entry stale under default 30d TTL (live ran)", c1.count().searches === 1 && !r1.fromCache, { ...c1.count(), fromCache: r1.fromCache });
+
+    // Widened TTL (365 days): the same-aged entry is a HIT.
+    fs.writeFileSync(entryFile, JSON.stringify(oldEntry), "utf8");
+    process.env.RESEARCH_CACHE_TTL_DAYS = "365";
+    const c2 = counters(0.9);
+    const r2 = await resolveSlotWithRetry(slot, { searchFn: c2.searchFn, validateFn: c2.validateFn });
+    check("same entry HITS under 365d TTL (zero live calls)", c2.count().searches === 0 && r2.fromCache === true, { ...c2.count(), fromCache: r2.fromCache });
+    check("hit replays the stored (older) value", r2.attempts[0]?.skeleton.value === 4242, r2.attempts[0]?.skeleton.value);
+    delete process.env.RESEARCH_CACHE_TTL_DAYS;
+  }
+
   delete process.env.RESEARCH_CACHE;
   fs.rmSync(tmpDir, { recursive: true, force: true });
   console.log(`\n${failures === 0 ? "ALL CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);

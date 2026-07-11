@@ -35,6 +35,20 @@ export function isResearchCacheEnabled(): boolean {
   return typeof v === "string" && CACHE_ON_VALUES.has(v.trim().toLowerCase());
 }
 
+// STALENESS (V6.17): a cached entry replays the CRAAP scores it earned when it
+// was researched — including Currency, which was graded against THAT date. The
+// TTL bounds how long that grade is trusted: entries older than the TTL are a
+// MISS and get re-researched live. Default 30 days; override with
+// RESEARCH_CACHE_TTL_DAYS for a long-lived showcase (which must then surface
+// its "last sourced" date) or a tighter dev window.
+const DEFAULT_TTL_DAYS = 30;
+
+export function cacheTtlDays(): number {
+  const raw = process.env.RESEARCH_CACHE_TTL_DAYS;
+  const n = raw === undefined ? NaN : Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_TTL_DAYS;
+}
+
 function cacheDir(): string {
   return (
     process.env.RESEARCH_CACHE_DIR ??
@@ -77,15 +91,21 @@ export function cacheGet(slot: ResearchSlot): CachedSlotResult | null {
     // Minimal integrity check — a hand-edited or truncated entry is a MISS,
     // never a crash and never a half-trusted value.
     if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      typeof parsed.cachedAt === "string" &&
-      parsed.skeleton &&
-      parsed.craap
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof parsed.cachedAt !== "string" ||
+      !parsed.skeleton ||
+      !parsed.craap
     ) {
-      return parsed;
+      return null;
     }
-    return null;
+    // TTL gate: an entry older than the TTL is STALE — its Currency grade no
+    // longer describes the data's age — so it is a miss and re-researches live.
+    const ageMs = Date.now() - Date.parse(parsed.cachedAt);
+    if (!Number.isFinite(ageMs) || ageMs > cacheTtlDays() * 86_400_000) {
+      return null;
+    }
+    return parsed;
   } catch {
     return null; // missing/unreadable file is simply a miss
   }
