@@ -13,6 +13,7 @@
 // Isolation (Principle 7) holds: each batch item is its own isolated request
 // with its own context. Batching changes WHERE the calls queue, never what
 // any component sees.
+import crypto from "node:crypto";
 import {
   deriveResearchSlots,
   finalizeResearcherResult,
@@ -48,13 +49,16 @@ export type BatchSizingConfig = {
 };
 
 // CRAAP replay is keyed by the slot definition the loop hands validateFn —
-// built from the same fields on both sides so the key always matches.
+// built from the same fields on both sides so the key always matches. HASHED,
+// not raw JSON: the key doubles as the Batches API custom_id, which the API
+// caps at 64 characters (a live-run finding the offline fake now enforces too).
 function slotDefKey(def: SlotDefinition): string {
-  return JSON.stringify({
+  const material = JSON.stringify({
     geography: def.geography,
     metric: def.metric,
     definition: def.definition,
   });
+  return crypto.createHash("sha256").update(material).digest("hex").slice(0, 32);
 }
 
 export async function runBackHalfSizingBatched(

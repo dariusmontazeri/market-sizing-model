@@ -97,6 +97,12 @@ function fakeBatchClient(handler: Handler) {
     messages: {
       batches: {
         create: async (body) => {
+          // Mirror the real API's constraint (found live): custom_id <= 64 chars.
+          for (const r of body.requests) {
+            if (r.custom_id.length > 64) {
+              throw new Error(`custom_id: String should have at most 64 characters (got ${r.custom_id.length})`);
+            }
+          }
           submissions.push(body.requests);
           const id = `batch_${n++}`;
           stored.set(
