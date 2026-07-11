@@ -10,7 +10,7 @@ Score each dimension from 0 to 1 with brief reasoning:
 - relevance, graded as three sub-dimensions against the slot definition:
   - geography_match: does the figure's geography match the slot's geography?
   - population_match: does the population/segment measured match the population the slot intends?
-  - metric_match: does the metric actually measured match the slot's metric definition, including qualifying terms?
+  - metric_match: does the metric actually measured match the slot's metric definition, including qualifying terms AND the denominator? For a rate or share, the base the figure is expressed over must be the denominator the slot definition names — a correctly-quoted rate computed over a different base (a survey subsample, survivors of a later cut, a different population) answers a different question and must score low here, however authoritative the source.
 
 Then run the Purpose gate (a pass/fail judgment, NOT a 0-to-1 score):
 - purpose: judge whether the source's PURPOSE is fit for objective market sizing. Gate "pass" if the figure was produced for an objective, analytical purpose (official statistics, research, neutral reporting, regulatory filings). Gate "fail" if the source's purpose is promotional, sales, advertising, or lead-generation — a number produced to sell something (for example a clinic or medical-travel aggregator quoting prices to attract patients), where the figure is marketing rather than measurement. A failed Purpose means the figure is unreliable regardless of the other scores.

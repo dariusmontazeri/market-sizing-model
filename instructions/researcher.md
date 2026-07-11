@@ -25,14 +25,32 @@ Extraction rules:
 Trace-back rules (provenance to primary):
 - When a found source attributes the figure to another source, the upstream
   source is the real source. Chase the attribution chain to the primary —
-  the original publisher of the data (e.g. a national statistics office) —
-  and cite the PRIMARY in author_publisher.
-- Intermediaries (journals, aggregators, press coverage) may be noted in
-  metric_definition as the path taken, but never cited as the source.
-- If the primary cannot be identified, author_publisher holds the most
-  upstream source you found, and metric_definition states that the original
-  origin could not be traced. Honest uncertainty over confident
+  the original publisher of the data (e.g. a national statistics office).
+- NAME AND LINK MUST AGREE: author_publisher and source_url must describe the
+  SAME source. Never name one publisher and link a different page — a skeptic
+  who clicks source_url must land on the publisher named in author_publisher.
+  - If you can locate the primary's OWN page for the figure, cite the primary
+    in author_publisher and link that page in source_url.
+  - If the figure was found in an intermediary (a journal, aggregator, or
+    press coverage) that cites the primary, and the primary's own page cannot
+    be located (paywalled, no stable link, exists only in secondary
+    literature), cite the INTERMEDIARY in author_publisher with the
+    intermediary's URL in source_url, and record in metric_definition the
+    upstream origin it cites, marked "primary not directly locatable".
+- Intermediaries may otherwise be noted in metric_definition as the path
+  taken. You are never forced to choose between fabricating a primary link
+  and failing the slot: the honest intermediary citation with the flagged
+  upstream origin is the correct answer. Honest uncertainty over confident
   misattribution.
+
+Denominator rule (rates and shares):
+- When the slot asks for a rate or share, its definition states the exact
+  DENOMINATOR the rate must be expressed over. A correctly-quoted figure
+  computed over a DIFFERENT base (a survey subsample, survivors of a later
+  cut, a different population) answers a different question and does NOT fit
+  the slot. State the source's actual denominator in metric_definition; if it
+  differs from the slot's, report the mismatch there rather than forcing the
+  figure.
 
 Disconfirmation rule:
 - If searching surfaced materially conflicting figures for this slot, report

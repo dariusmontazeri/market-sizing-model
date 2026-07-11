@@ -281,11 +281,19 @@ export function deriveResearchSlots(
       `For reference only, the fully narrowed target — which is NOT what this slot wants — is: ${structure.addressable_unit}`,
   });
 
-  // Filters — one rate per filter, in the chain's order.
+  // Filters — one rate per filter, in the chain's order. Each slot states its
+  // DENOMINATOR explicitly — the population surviving the PREVIOUS cut — so
+  // the researcher matches rates to the right base and CRAAP's metric_match
+  // can test denominator-match, not just subject-match (V6.16.5: a real,
+  // correctly-quoted figure over the wrong base answers a different question).
   structure.filters.forEach((filter, i) => {
     const distinction = structure.distinctions.find(
       (d) => d.characteristic === filter.distinction_ref,
     );
+    const denominator =
+      i === 0
+        ? `the FULL anchor population (the annual ${anchorLabel}), before any narrowing cut`
+        : `ONLY the population that already passed the previous cut "${structure.filters[i - 1].label}" — not the full anchor, and not any other subset`;
     slots.push({
       kind: "filter",
       filterIndex: i,
@@ -293,6 +301,7 @@ export function deriveResearchSlots(
       metric: `Rate kept by the narrowing cut "${filter.label}" in ${geo}`,
       definition:
         `Express as a proportion or percentage: of the figure entering this cut, the share that passes "${filter.label}". ` +
+        `The rate's DENOMINATOR must be ${denominator}. A rate expressed over a different base does not fit this slot. ` +
         (distinction
           ? `The cut implements the distinction "${distinction.characteristic}" — ${distinction.why_it_narrows}`
           : `The cut references the distinction "${filter.distinction_ref}".`),
