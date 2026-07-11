@@ -146,11 +146,11 @@ async function caseComplete() {
   check("samUnits = 6000*0.6*0.5 = 1800", r.sizing?.samUnits === 1800, r.sizing?.samUnits);
   check("samDollars = 1800*8000 = 14,400,000", r.sizing?.samDollars === 14_400_000, r.sizing?.samDollars);
   check("SOM base somDollars = 432,000", r.sizing?.som.base.somDollars === 432_000, r.sizing?.som.base.somDollars);
-  check("SOM base replacement (rate 0.5) = 216,000", r.sizing?.som.base.replacementDollars === 216_000, r.sizing?.som.base.replacementDollars);
-  check("SOM base total w/ replacement = 648,000", r.sizing?.som.base.totalWithReplacement === 648_000, r.sizing?.som.base.totalWithReplacement);
+  check("SOM base replacement (rate 0.2, 5y cadence) = 86,400", Math.abs((r.sizing?.som.base.replacementDollars ?? 0) - 86_400) < 1e-6, r.sizing?.som.base.replacementDollars);
+  check("SOM base total w/ replacement = 518,400", Math.abs((r.sizing?.som.base.totalWithReplacement ?? 0) - 518_400) < 1e-6, r.sizing?.som.base.totalWithReplacement);
   check("SOM bear/base/bull present", !!(r.sizing?.som.bear && r.sizing?.som.base && r.sizing?.som.bull), true);
-  check("replacementRate is a flagged assumption (0.5)", r.assumptions.some((a) => a.field === "replacementRate" && a.value === 0.5), r.assumptions);
-  check("sizingInputs.replacementRate = assumption 0.5", r.sizingInputs?.replacementRate === 0.5, r.sizingInputs?.replacementRate);
+  check("replacementRate is a flagged assumption (0.2)", r.assumptions.some((a) => a.field === "replacementRate" && a.value === 0.2), r.assumptions);
+  check("sizingInputs.replacementRate = assumption 0.2", r.sizingInputs?.replacementRate === 0.2, r.sizingInputs?.replacementRate);
   // credibility = mean(0.9, 0.8, 0.85, 0.75) = 0.825 (compare within float epsilon)
   check("credibility = mean of slot CRAAP = 0.825", r.credibility.score !== null && Math.abs(r.credibility.score - 0.825) < 1e-9, r.credibility.score);
 }

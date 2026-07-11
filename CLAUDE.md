@@ -95,21 +95,26 @@ object is deferred (build focus is the tool itself).
   never smarter: it does not train on its own runs. Offline-proven
   (scripts/test-research-cache.ts 19/19).
 - Dev structure pin (`lib/structurePin.ts`, PIN_STRUCTURE env flag, OFF by
-  default and in prod): loads the VALIDATED 2-filter Germany structure straight
-  into the loop, bypassing proposer + validator — a dev affordance only; the
-  live path always runs the full chain. NOTE (2026-07-10): a 3-filter variant
-  (candidacy split into fitting rate ~30% + mobility grade ~95%, matching the
-  hand model) was REJECTED by the structural validator on semantic_double_count
-  (low mobility is often WHY a recipient is never fitted, so the two cuts
-  overlap). The rejected variant is preserved at
-  scripts/structure-pin.3filter-rejected.ts.txt pending a decision; the
-  validated 2-filter pin stands. Re-validate the pin whenever it or the
-  validator changes (scripts/validate-pinned-structure.ts, one live call).
-  CONTEXT (V6.17.5, open): the hand benchmark was built for a specific client
-  whose device class is mobility-grade gated; a GENERAL prosthetics sizing has
-  no such cut, which is consistent with the gate's rejection of the 3-filter
-  split. Benchmark-scope decision (general market vs client-scoped market vs
-  both) is open in the planner.
+  default and in prod): loads the VALIDATED GENERAL-MARKET Germany structure
+  (major-limb share -> prosthetic fitting rate) straight into the loop,
+  bypassing proposer + validator — a dev affordance only; the live path always
+  runs the full chain. Benchmark-scope RULED (V6.17.6): the hand model's
+  mobility-grade cut was scope for one client's device class, so ALL mobility
+  framing was removed from the pin; the revised pin re-passed the gate live
+  (Stage 1 5/5, Stage 2 6/6 first attempt, mobility exclusion explicitly
+  endorsed). A 3-filter variant was earlier rejected on semantic_double_count
+  and is preserved at scripts/structure-pin.3filter-rejected.ts.txt (now moot).
+  Re-validate the pin whenever it or the validator changes
+  (scripts/validate-pinned-structure.ts, one live call).
+- Benchmarks: benchmarks/BENCHMARKS.md — A: Germany prosthetics general market
+  (accuracy; adjusted hand-model golden numbers, per-slot bands, proposer
+  repeatability test); B: Germany battery-electric cars (pipeline smoke, Tier-1
+  KBA coverage; prerequisite: parameterize proposeStructure, the hardcoded
+  market was a placeholder); C: fallback ladder in isolation (declared
+  geography proxy -> flagged assumption; requires the researcher proxy
+  directive + Slice 3 body). Price is the flagged high-variance slot — the UI
+  phase must tell the user prices vary significantly and are the top number to
+  verify themselves.
 
 ### Phase 4 open items
 - Known-hard slots from the real run: filter[1] (candidacy rate, CRAAP 0.153)
@@ -120,9 +125,10 @@ object is deferred (build focus is the tool itself).
   verified live. Acceptance: the anchor's source_url resolves to a page
   matching author_publisher, or carries the explicit "primary not directly
   locatable" flag; filter rates match their stated denominators.
-- Replacement layer: replacementRate is a hardcoded flagged assumption (0.5),
-  excluded from credibility. General fix: the proposer emits a replacement
-  sub-structure (cadence x installed base) for ANY renewal market.
+- Replacement layer: replacementRate is a flagged, reasoned assumption (0.2 =
+  the hand model's 5-year replacement cadence), excluded from credibility.
+  General fix: the proposer emits a replacement sub-structure (cadence x
+  installed base) for ANY renewal market.
 - Assumption fallback BODY (Slice 3): the seam exists and emits no value.
 
 ### Next, in order

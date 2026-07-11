@@ -47,9 +47,9 @@ import type { ProposedStructure } from "./structureProposer";
 // slot. The value is a transparent placeholder for wiring, NOT a validated figure.
 const REPLACEMENT_RATE_ASSUMPTION = {
   field: "replacementRate" as const,
-  value: 0.5,
+  value: 0.2,
   basis:
-    "PLACEHOLDER ASSUMPTION (not researched this slice): the recurring replacement/renewal market is modeled as a fraction of the new-fitting SOM. deriveResearchSlots derives no replacement-cadence slot yet, so this number is an explicit, untrusted assumption pending a researched replacement layer in a later slice. It is excluded from the credibility score and must not be read as sourced.",
+    "EXPLICIT ASSUMPTION (not researched): recurring replacement/renewal revenue modeled as a fraction of the new-fitting SOM, at a 5-year replacement cadence (1/5 per year — the hand-done Germany benchmark's assumption). deriveResearchSlots derives no replacement-cadence slot yet, so this is a flagged, reasoned assumption pending a researched replacement layer. It is excluded from the credibility score and must not be read as sourced.",
 };
 
 export type SlotSource = {

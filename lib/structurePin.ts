@@ -9,14 +9,16 @@
 // Nothing here runs unless a caller first checks isStructurePinned(). This module
 // is a dev affordance, not a code path the live pipeline takes on its own.
 //
-// What is pinned is the VALIDATED structure, never raw proposer output: it is the
-// committed Germany proposer fixture with the phantom Hilfsmittelverzeichnis
-// "reimbursable-listing" filter REMOVED (that filter failed the structural
-// validator's filter_narrows_demand check — it gates a supply-side reimbursement
-// step, not real demand) along with its now-orphaned distinction. The remaining
-// two filters narrow genuine demand and pass the gate (confirmed once via
-// scripts/validate-pinned-structure.ts; Stage-1 integrity is asserted offline in
-// scripts/test-structure-pin.ts).
+// What is pinned is the VALIDATED structure, never raw proposer output. History:
+// the committed Germany proposer fixture minus the phantom Hilfsmittelverzeichnis
+// "reimbursable-listing" filter (failed filter_narrows_demand — a supply-side
+// step, not demand), and — per the benchmark-scope ruling (planner V6.17) — minus
+// all mobility-grade framing: Mobilitaetsklasse gating belongs to a specific
+// client's device class, not to the GENERAL prosthetics market this benchmark
+// sizes. The two remaining filters (major-limb share, prosthetic fitting rate)
+// narrow genuine general-market demand. Re-validated whenever this const or the
+// validator changes (scripts/validate-pinned-structure.ts); Stage-1 integrity is
+// asserted offline in scripts/test-structure-pin.ts.
 import type { MarketRef } from "./researcher";
 import type { ProposedStructure } from "./structureProposer";
 
@@ -40,7 +42,7 @@ export const PINNED_GERMANY_MARKET: MarketRef = {
 // against ProposedStructure at compile time (no runtime file load, no tracing).
 export const PINNED_GERMANY_STRUCTURE: ProposedStructure = {
   addressable_unit:
-    "A functional prosthetic limb device (lower- or upper-limb prosthesis) supplied or fitted within a year in Germany to a person with major limb loss/absence who is clinically a prosthesis candidate at a qualifying mobility grade.",
+    "A functional prosthetic limb device (lower- or upper-limb prosthesis) supplied or fitted within a year in Germany to a person with major limb loss/absence who is actually fitted with a prosthesis.",
   anchor_type: {
     type: "event_count",
     justification:
@@ -55,9 +57,9 @@ export const PINNED_GERMANY_STRUCTURE: ProposedStructure = {
     },
     {
       characteristic:
-        "Recipient is a clinically eligible prosthesis candidate at a qualifying mobility grade",
+        "Recipient is actually fitted with a limb prosthesis rather than merely undergoing amputation",
       why_it_narrows:
-        "Many major-limb amputees (frail, dysvascular, diabetic, low-mobility) are never fitted; the German mobility-class (Mobilitätsklasse/K-level) candidacy assessment gates who actually receives a device.",
+        "Many major amputees are never fitted, due to comorbidity, frailty, or rehabilitation non-candidacy; only the fitted share generates device demand.",
     },
   ],
   filters: [
@@ -69,9 +71,9 @@ export const PINNED_GERMANY_STRUCTURE: ProposedStructure = {
     },
     {
       label:
-        "Clinical-candidacy / mobility-grade fitment filter (keep only those assessed as prosthesis-eligible at a qualifying Mobilitätsklasse)",
+        "Prosthetic fitting rate: share of major amputees actually fitted with a limb prosthesis",
       distinction_ref:
-        "Recipient is a clinically eligible prosthesis candidate at a qualifying mobility grade",
+        "Recipient is actually fitted with a limb prosthesis rather than merely undergoing amputation",
     },
   ],
   price_basis: {
@@ -82,7 +84,7 @@ export const PINNED_GERMANY_STRUCTURE: ProposedStructure = {
   gap_check:
     "Residual gap on the addition side: a new-amputation event stream undercounts the addressable unit because annual device supply also includes replacement/renewal prostheses for the existing prosthesis-user base (devices wear out on a multi-year cycle and are re-supplied). Filtering amputation events alone never captures these renewal provision events, so the filtered figure is the 'newly fitted' subset, not total devices supplied per year; the replacement-flow component must be added separately. There is also a residual unilateral/bilateral nuance (one event can require more than one device).",
   double_count_check:
-    "The two filters target distinct characteristics — anatomical level (major vs minor limb segment) and clinical fitment candidacy (mobility grade) — that are largely independent: anatomical eligibility is a structural fact about the amputation, while candidacy is a downstream clinical assessment. Applied in order (major-limb first, then candidacy), the candidacy rate is conditioned on the already-major-limb subset, so the two cuts do not remove the same patients twice.",
+    "The two filters target distinct characteristics — anatomical level (major vs minor limb segment) and actual prosthetic fitting (fitted vs never fitted). Anatomical level is a structural fact about the amputation event; fitting is a downstream clinical/rehabilitation outcome. Applied in order (major-limb first, then fitting rate), the fitting rate is conditioned on the already-major-limb subset, so the two cuts do not remove the same patients twice. Mobility-grade (Mobilitätsklasse) gating is deliberately NOT a filter here: it gates specific device classes (a product-scope concern), not general prosthetic demand.",
 };
 
 export type PinnedStructure = {
