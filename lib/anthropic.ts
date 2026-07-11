@@ -48,6 +48,21 @@ export type MessageCreator = {
   };
 };
 
+// Live calls STREAM under the hood and assemble the final message. A plain
+// non-streaming create() is subject to the SDK's request timeout, and a long
+// researcher turn (web search + adaptive thinking on the hard slots) can
+// exceed it — observed twice as APIConnectionTimeoutError on live escalations
+// after batch waves. Streaming keeps the connection active for the whole turn.
+// Request params are unchanged (same builder), so batch requests stay
+// byte-identical to sync ones.
+function streamingCreator(client: Anthropic): MessageCreator {
+  return {
+    messages: {
+      create: (params) => client.messages.stream(params).finalMessage(),
+    },
+  };
+}
+
 export type StructuredCallOptions<T> = {
   // Component name for errors/logs (e.g. "researcher", "structure proposer").
   label: string;
@@ -147,7 +162,7 @@ export async function runStructuredCall<T>(
   opts: StructuredCallOptions<T>,
 ): Promise<StructuredCallResult<T>> {
   const maxAttempts = opts.maxAttempts ?? 2;
-  const client = opts.client ?? getClient();
+  const client = opts.client ?? streamingCreator(getClient());
   const usage: Usage = { inputTokens: 0, outputTokens: 0 };
   let lastFailure = "";
 

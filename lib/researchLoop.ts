@@ -190,6 +190,7 @@ export async function resolveSlotWithRetry(
   const searchFn = deps.searchFn;
   const validate = deps.validateFn ?? validateSkeleton;
   const slotDef = toSlotDefinition(slot);
+  const slotLabel = `${slot.kind} — ${slot.metric}`;
   const searchRounds: SearchRound[] = [];
   const attempts: LoopAttempt[] = [];
   const totalUsage = { inputTokens: 0, outputTokens: 0 };
@@ -204,6 +205,9 @@ export async function resolveSlotWithRetry(
     const blendedScore = cached.craap.weightedTotal;
     const purposePass = cached.craap.purpose.gate === "pass";
     if (purposePass && blendedScore >= CRAAP_THRESHOLD) {
+      console.log(
+        `[research-loop] "${slotLabel}" replayed from cache (CRAAP ${blendedScore.toFixed(3)}, zero cost)`,
+      );
       const attempt: LoopAttempt = {
         attempt: 1,
         tier: 1,
@@ -245,6 +249,10 @@ export async function resolveSlotWithRetry(
     const avoidPublishers = attempts
       .map((a) => a.skeleton.author_publisher)
       .filter((p): p is string => typeof p === "string" && p.trim() !== "");
+
+    console.log(
+      `[research-loop] "${slotLabel}" attempt ${attempt}/${MAX_ATTEMPTS} (tier ${tier}, up to ${maxSearches} searches${escalated ? ", escalated live" : ""})...`,
+    );
 
     // Spacing + backoff live here: a rate-limit block is retried at the SAME
     // tier inside this call. It returns only once the search succeeded or the
@@ -294,6 +302,10 @@ export async function resolveSlotWithRetry(
     const blendedScore = craap.weightedTotal;
     const purposePass = craap.purpose.gate === "pass";
     const passed = purposePass && blendedScore >= CRAAP_THRESHOLD;
+
+    console.log(
+      `[research-loop] "${slotLabel}" attempt ${attempt}: CRAAP ${blendedScore.toFixed(3)} — ${passed ? "PASS" : purposePass ? `below threshold ${CRAAP_THRESHOLD}` : "PURPOSE gate FAIL"}`,
+    );
 
     attempts.push({
       attempt,
