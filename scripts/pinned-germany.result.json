@@ -1,0 +1,123 @@
+{
+  "ok": true,
+  "market": {
+    "country": "Germany",
+    "market": "prosthetics (prosthetic limb devices)"
+  },
+  "pinned": true,
+  "complete": false,
+  "incompleteReasons": [
+    "filter[1]: no source cleared CRAAP 0.7 across all tiers",
+    "filter[2]: no source cleared CRAAP 0.7 across all tiers",
+    "price: no source cleared CRAAP 0.7 across all tiers"
+  ],
+  "slots": [
+    {
+      "kind": "anchor",
+      "filterIndex": null,
+      "metric": "Annual count of qualifying events per year that the market \"prosthetics (prosthetic limb devices)\" descends from, before any narrowing filter",
+      "outcome": "resolved",
+      "resolved": true,
+      "rawValue": 62016,
+      "units": "amputations per year (count of amputation procedures)",
+      "normalizedRate": null,
+      "normalizationNote": null,
+      "source": {
+        "author_publisher": "Federal Statistical Office of Germany (Destatis) — DRG/OPS hospital procedure statistics",
+        "source_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC8780615/"
+      },
+      "craapScore": 0.8,
+      "purposeGate": "pass",
+      "unresolvedReason": null
+    },
+    {
+      "kind": "filter",
+      "filterIndex": 0,
+      "metric": "Rate kept by the narrowing cut \"Major-limb-segment filter (exclude minor/digit/partial amputations not fitted with a limb prosthesis)\" in Germany",
+      "outcome": "resolved",
+      "resolved": true,
+      "rawValue": 30,
+      "units": "percent",
+      "normalizedRate": 0.3,
+      "normalizationNote": "interpreted 30 percent as 0.3 (value > 1 -> percentage divided by 100)",
+      "source": {
+        "author_publisher": "PLoS ONE (population-based study using German statutory health insurance data, ~80 SHI companies, 4 million insurants)",
+        "source_url": "https://pubmed.ncbi.nlm.nih.gov/26409704/"
+      },
+      "craapScore": 0.722,
+      "purposeGate": "pass",
+      "unresolvedReason": null
+    },
+    {
+      "kind": "filter",
+      "filterIndex": 1,
+      "metric": "Rate kept by the narrowing cut \"Prosthetic fitting rate: share of major lower-limb amputees actually fitted with a limb prosthesis\" in Germany",
+      "outcome": "failed_threshold",
+      "resolved": false,
+      "rawValue": 96,
+      "units": "percent",
+      "normalizedRate": null,
+      "normalizationNote": null,
+      "source": {
+        "author_publisher": "Applied Sciences (MDPI) — retrospective/prospective study at a German maximum care care provider (primary publisher of the figure)",
+        "source_url": "https://www.mdpi.com/2076-3417/14/16/7274"
+      },
+      "craapScore": 0.6,
+      "purposeGate": "pass",
+      "unresolvedReason": "no source cleared CRAAP 0.7 across all tiers"
+    },
+    {
+      "kind": "filter",
+      "filterIndex": 2,
+      "metric": "Rate kept by the narrowing cut \"Mobility-grade eligibility: share of fitted amputees at a qualifying Mobilitätsklasse\" in Germany",
+      "outcome": "failed_threshold",
+      "resolved": false,
+      "rawValue": null,
+      "units": null,
+      "normalizedRate": null,
+      "normalizationNote": null,
+      "source": {
+        "author_publisher": null,
+        "source_url": null
+      },
+      "craapScore": 0.233,
+      "purposeGate": "pass",
+      "unresolvedReason": "no source cleared CRAAP 0.7 across all tiers"
+    },
+    {
+      "kind": "price",
+      "filterIndex": null,
+      "metric": "Average price per device supplied for \"prosthetics (prosthetic limb devices)\" in Germany",
+      "outcome": "failed_threshold",
+      "resolved": false,
+      "rawValue": 40000,
+      "units": "USD per device",
+      "normalizedRate": null,
+      "normalizationNote": null,
+      "source": {
+        "author_publisher": "Bookimed (medical-travel clinic aggregator)",
+        "source_url": "https://us-uk.bookimed.com/clinics/country=germany/procedure=hand-prosthetics/"
+      },
+      "craapScore": 0.476,
+      "purposeGate": "fail",
+      "unresolvedReason": "no source cleared CRAAP 0.7 across all tiers"
+    }
+  ],
+  "sizing": null,
+  "sizingInputs": null,
+  "assumptions": [
+    {
+      "field": "replacementRate",
+      "value": 0.5,
+      "basis": "PLACEHOLDER ASSUMPTION (not researched this slice): the recurring replacement/renewal market is modeled as a fraction of the new-fitting SOM. deriveResearchSlots derives no replacement-cadence slot yet, so this number is an explicit, untrusted assumption pending a researched replacement layer in a later slice. It is excluded from the credibility score and must not be read as sourced."
+    }
+  ],
+  "credibility": {
+    "score": 0.761,
+    "basis": "PARTIAL — mean over resolved slots only; run is INCOMPLETE so this is not a whole-model score"
+  },
+  "usage": {
+    "inputTokens": 950331,
+    "outputTokens": 37286
+  }
+}
