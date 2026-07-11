@@ -79,6 +79,70 @@ export type StructuredCallResult<T> = {
 
 const MAX_CONTINUATIONS = 5;
 
+// Build the exact request params for one structured attempt. Exported so the
+// batch path (lib/batchRunner.ts) submits BYTE-IDENTICAL requests to what the
+// sync path sends — one construction site, no drift.
+export function buildStructuredParams<T>(
+  opts: StructuredCallOptions<T>,
+  maxTokens: number,
+  messages: Anthropic.MessageParam[],
+): Anthropic.MessageCreateParamsNonStreaming {
+  return {
+    model: opts.model,
+    max_tokens: maxTokens,
+    thinking: { type: "adaptive" },
+    system: opts.system,
+    ...(opts.tools ? { tools: opts.tools } : {}),
+    output_config: {
+      format: { type: "json_schema", schema: opts.schema },
+    },
+    messages,
+  } as Anthropic.MessageCreateParamsNonStreaming;
+}
+
+// Classify one completed response against the known failure classes. Exported
+// so the batch path applies the SAME classification (and therefore the same
+// retry semantics) as the sync path.
+export type StructuredOutcome<T> =
+  | { kind: "ok"; value: T }
+  | { kind: "pause_turn" } // server-side tool pause — continue the turn
+  | { kind: "fail"; reason: string };
+
+export function classifyStructuredResponse<T>(
+  opts: Pick<StructuredCallOptions<T>, "label" | "guard">,
+  response: Anthropic.Message,
+  maxTokens: number,
+): StructuredOutcome<T> {
+  if (response.stop_reason === "pause_turn") return { kind: "pause_turn" };
+  const text = extractText(response.content);
+  if (response.stop_reason === "max_tokens") {
+    return {
+      kind: "fail",
+      reason: `turn ended on max_tokens (${maxTokens}) — JSON likely truncated`,
+    };
+  }
+  if (text.trim() === "") {
+    return {
+      kind: "fail",
+      reason: `no JSON — turn ended without a final answer (stop_reason: ${response.stop_reason})`,
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return {
+      kind: "fail",
+      reason: `final text is not valid JSON (stop_reason: ${response.stop_reason})`,
+    };
+  }
+  if (opts.guard(parsed)) return { kind: "ok", value: parsed };
+  return {
+    kind: "fail",
+    reason: `JSON parsed but failed the ${opts.label} output guard`,
+  };
+}
+
 export async function runStructuredCall<T>(
   opts: StructuredCallOptions<T>,
 ): Promise<StructuredCallResult<T>> {
@@ -96,17 +160,7 @@ export async function runStructuredCall<T>(
     ];
 
     const callModel = () =>
-      client.messages.create({
-        model: opts.model,
-        max_tokens: maxTokens,
-        thinking: { type: "adaptive" },
-        system: opts.system,
-        ...(opts.tools ? { tools: opts.tools } : {}),
-        output_config: {
-          format: { type: "json_schema", schema: opts.schema },
-        },
-        messages,
-      });
+      client.messages.create(buildStructuredParams(opts, maxTokens, messages));
 
     let response = await callModel();
     usage.inputTokens += response.usage.input_tokens;
@@ -128,28 +182,14 @@ export async function runStructuredCall<T>(
       continuations++;
     }
 
-    // Classify the attempt. Every failure path below is one of the two known
-    // reliability classes; anything else parses, guards, and returns.
-    const text = extractText(response.content);
-    if (response.stop_reason === "max_tokens") {
-      lastFailure = `turn ended on max_tokens (${maxTokens}) — JSON likely truncated`;
-    } else if (text.trim() === "") {
-      lastFailure = `no JSON — turn ended without a final answer (stop_reason: ${response.stop_reason})`;
-    } else {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        lastFailure = `final text is not valid JSON (stop_reason: ${response.stop_reason})`;
-        parsed = undefined;
-      }
-      if (parsed !== undefined) {
-        if (opts.guard(parsed)) {
-          return { value: parsed, model: response.model, usage, content, attempts: attempt };
-        }
-        lastFailure = `JSON parsed but failed the ${opts.label} output guard`;
-      }
+    const outcome = classifyStructuredResponse(opts, response, maxTokens);
+    if (outcome.kind === "ok") {
+      return { value: outcome.value, model: response.model, usage, content, attempts: attempt };
     }
+    lastFailure =
+      outcome.kind === "fail"
+        ? outcome.reason
+        : `turn still paused after ${MAX_CONTINUATIONS} continuations`;
 
     if (attempt < maxAttempts) {
       console.warn(

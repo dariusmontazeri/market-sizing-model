@@ -65,7 +65,9 @@ const MAX_ATTEMPTS = 3;
 // Web_search ceiling per attempt: the cheap first attempt searches less; an
 // escalated attempt (earned by a sub-threshold CRAAP) gets the fuller budget so a
 // hard slot can still recover. Never below MIN_SEARCHES (enforced in researcher).
-const MAX_SEARCHES_FIRST = 3;
+// MAX_SEARCHES_FIRST is exported so the batch path's precomputed first attempts
+// use the same ceiling as the sequential loop's first attempt.
+export const MAX_SEARCHES_FIRST = 3;
 const MAX_SEARCHES_ESCALATED = 5;
 
 // The assumption-fallback SEAM (Slice 3 boundary). When a slot dead-ends, the

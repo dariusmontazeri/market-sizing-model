@@ -106,6 +106,22 @@ object is deferred (build focus is the tool itself).
   and is preserved at scripts/structure-pin.3filter-rejected.ts.txt (now moot).
   Re-validate the pin whenever it or the validator changes
   (scripts/validate-pinned-structure.ts, one live call).
+- Batched back-half (`lib/batchRunner.ts` + `lib/batchSizing.ts`, V6.17.4
+  BUILT): the bulk/non-interactive entry (runPinnedGermanySizingBatched /
+  scripts/run-pinned-germany-batched.ts). Waves the first-attempt researcher
+  calls and their CRAAP gradings through the Message Batches API (50% token
+  price, separate queue — sidesteps interactive rate pressure), then runs the
+  UNCHANGED sequential pipeline with replay deps: all routing (cache, dead-end
+  seam, threshold, tier descent, keep-best) stays single-sourced in
+  researchLoop.ts, and only sub-threshold or batch-failed slots escalate to
+  live sequential calls. Requests are built by the same buildStructuredParams
+  and classified by the same classifyStructuredResponse as the sync path
+  (byte-identical, same reliability retry semantics: pause_turn continuation
+  waves, doubled-budget retry waves). Batching is NOT chaining — every item is
+  its own isolated context, Principle 7 untouched. Interactive path unchanged.
+  Offline-proven (scripts/test-batch-sizing.ts, 16/16, zero API): continuation,
+  retry, escalation handoff, dead-end mirror, cache-aware exclusion. NOT yet
+  exercised live.
 - Benchmarks: benchmarks/BENCHMARKS.md — A: Germany prosthetics general market
   (accuracy; adjusted hand-model golden numbers, per-slot bands, proposer
   repeatability test); B: Germany battery-electric cars (pipeline smoke, Tier-1
@@ -140,9 +156,7 @@ object is deferred (build focus is the tool itself).
 3. UI render of the scored result object + its API route.
 4. Other three methods, then the router, then pre-launch hardening (hosted
    cache/KV, global cap + per-user cooldown, injection battery, key rotation,
-   Vercel bot-protection resolution). Cost lever noted for the multi-market /
-   showcase phase: Batches API wave architecture (50% cheaper, isolation
-   preserved — planner V6.17.4); not for the interactive path.
+   Vercel bot-protection resolution).
 
 The full spec is the planning doc (Drive, V6.16; local extract in the repo is
 gitignored) — source of truth.

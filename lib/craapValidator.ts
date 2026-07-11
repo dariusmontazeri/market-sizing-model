@@ -7,7 +7,11 @@
 // scores and reasoning; the relevance roll-up and the weighted total are
 // computed HERE, in code, with locked weights.
 import { loadInstruction } from "./instructions";
-import { runStructuredCall } from "./anthropic";
+import {
+  runStructuredCall,
+  type StructuredCallOptions,
+  type Usage,
+} from "./anthropic";
 import { MODELS } from "./models";
 import type { AnchorSkeleton } from "./researcher";
 
@@ -38,7 +42,7 @@ export type PurposeGate = { gate: "pass" | "fail"; reasoning: string };
 
 // Shape the model must return. Relevance is graded on three sub-dimensions —
 // the shared vocabulary: geography match, population match, metric match.
-type CraapModelOutput = {
+export type CraapModelOutput = {
   authority: DimensionScore;
   currency: DimensionScore;
   accuracy: DimensionScore;
@@ -172,15 +176,16 @@ export type CraapValidationResult = {
   usage: { inputTokens: number; outputTokens: number };
 };
 
-export async function validateSkeleton(
+// Build the full structured-call options for one grading — the single place a
+// CRAAP request is constructed. The sync path (validateSkeleton) and the batch
+// path (lib/batchSizing.ts) both use this. Adaptive thinking + four scored
+// dimensions + the Purpose gate; 4096 keeps headroom so the turn doesn't end on
+// max_tokens before the final JSON (doubled once on a reliability retry).
+export function craapCallOptions(
   slot: SlotDefinition,
   skeleton: AnchorSkeleton,
-): Promise<CraapValidationResult> {
-  // Shared plumbing (lib/anthropic.ts) owns the client, continuations, and the
-  // empty-turn/truncation reliability retry. Adaptive thinking + four scored
-  // dimensions + the Purpose gate; 4096 keeps headroom so the turn doesn't end
-  // on max_tokens before the final JSON (doubled once on a reliability retry).
-  const { value, model, usage } = await runStructuredCall<CraapModelOutput>({
+): StructuredCallOptions<CraapModelOutput> {
+  return {
     label: "CRAAP validator",
     model: MODELS.craapValidator,
     system: CRAAP_SYSTEM_PROMPT,
@@ -188,9 +193,16 @@ export async function validateSkeleton(
     schema: CRAAP_SCHEMA as unknown as Record<string, unknown>,
     guard: isCraapModelOutput,
     maxTokens: 4096,
-  });
+  };
+}
 
-  // Arithmetic lives here, not in the model.
+// The arithmetic roll-up — lives here in CODE, never in the model. Exported so
+// the batch path finalizes gradings identically to the sync path.
+export function finalizeCraapResult(
+  value: CraapModelOutput,
+  model: string,
+  usage: Usage,
+): CraapValidationResult {
   const relevanceScore =
     (value.relevance.geography_match.score +
       value.relevance.population_match.score +
@@ -212,4 +224,14 @@ export async function validateSkeleton(
     model,
     usage,
   };
+}
+
+export async function validateSkeleton(
+  slot: SlotDefinition,
+  skeleton: AnchorSkeleton,
+): Promise<CraapValidationResult> {
+  const { value, model, usage } = await runStructuredCall<CraapModelOutput>(
+    craapCallOptions(slot, skeleton),
+  );
+  return finalizeCraapResult(value, model, usage);
 }

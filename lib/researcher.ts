@@ -8,7 +8,11 @@
 // prompt; the user message carries data.
 import Anthropic from "@anthropic-ai/sdk";
 import { loadInstruction } from "./instructions";
-import { runStructuredCall } from "./anthropic";
+import {
+  runStructuredCall,
+  type StructuredCallOptions,
+  type StructuredCallResult,
+} from "./anthropic";
 import { MODELS } from "./models";
 // Type-only import: the researcher consumes the validated structure's shape.
 // Types are erased at compile time, so this does NOT create a runtime cycle
@@ -183,41 +187,23 @@ const DEFAULT_MAX_SEARCHES = 5;
 // skeleton JSON (the shared plumbing doubles it once on a reliability retry).
 const RESEARCHER_MAX_TOKENS = 8192;
 
-// One isolated researcher call. Takes the fully-built user message and runs the
-// web-search + structured-output extraction for a single slot. The shared
-// plumbing (lib/anthropic.ts) owns continuations and the empty-turn/truncation
-// reliability retry; this wrapper owns the researcher-specific concerns
-// (search ceiling, search-error scan).
-async function runResearcherCall(
-  userContent: string,
-  opts?: { maxSearches?: number },
-): Promise<ResearcherCallResult> {
-  const maxSearches = Math.max(
-    MIN_SEARCHES,
-    opts?.maxSearches ?? DEFAULT_MAX_SEARCHES,
-  );
-
-  const { value, model, usage, content } = await runStructuredCall<AnchorSkeleton>({
-    label: "researcher",
-    model: MODELS.researcher,
-    system: RESEARCHER_SYSTEM_PROMPT,
-    userContent,
-    schema: ANCHOR_SKELETON_SCHEMA as unknown as Record<string, unknown>,
-    guard: isAnchorSkeleton,
-    maxTokens: RESEARCHER_MAX_TOKENS,
-    // Server-side web search; max_uses bounds cost per call (attempt-dependent,
-    // floored at MIN_SEARCHES).
-    tools: [
-      { type: "web_search_20260209", name: "web_search", max_uses: maxSearches },
-    ],
-  });
-
-  const searchErrorCodes = collectSearchErrorCodes(content);
+// Turn a completed structured call into the researcher's result shape (the
+// search-error scan lives here). Exported so the batch path finalizes its
+// results identically to the sync path.
+export function finalizeResearcherResult(
+  r: StructuredCallResult<AnchorSkeleton>,
+): ResearcherCallResult {
+  const searchErrorCodes = collectSearchErrorCodes(r.content);
   const rateLimitBlocked = searchErrorCodes.some((code) =>
     (SEARCH_RATELIMIT_CODES as readonly string[]).includes(code),
   );
-
-  return { skeleton: value, model, usage, searchErrorCodes, rateLimitBlocked };
+  return {
+    skeleton: r.value,
+    model: r.model,
+    usage: r.usage,
+    searchErrorCodes,
+    rateLimitBlocked,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -339,15 +325,21 @@ const TIER_DIRECTIVE: Record<TierTarget, string> = {
 //
 // The tier directive and the avoid-list are CODE-orchestrated (trusted), so they
 // sit OUTSIDE the untrusted block alongside the task instruction.
-export async function researchSlot(
+export type ResearchSlotCallOpts = {
+  tier?: TierTarget;
+  attempt?: number;
+  avoidPublishers?: string[];
+  maxSearches?: number;
+};
+
+// Build the full structured-call options for one slot — the single place a
+// researcher request is constructed. The sync path (researchSlot) and the
+// batch path (lib/batchSizing.ts) both use this, so batched requests are
+// byte-identical to sequential ones.
+export function slotCallOptions(
   slot: ResearchSlot,
-  opts?: {
-    tier?: TierTarget;
-    attempt?: number;
-    avoidPublishers?: string[];
-    maxSearches?: number;
-  },
-): Promise<ResearcherCallResult> {
+  opts?: ResearchSlotCallOpts,
+): StructuredCallOptions<AnchorSkeleton> {
   const lines = [
     "Fill the extraction skeleton for the research slot described in the data block.",
     "Build your search query per the rules and extract exactly one sourced figure for this slot.",
@@ -369,7 +361,33 @@ export async function researchSlot(
     wrapUntrusted(
       `Slot kind: ${slot.kind}\nGeography: ${slot.geography}\nMetric: ${slot.metric}\nSlot definition: ${slot.definition}`,
     );
-  return runResearcherCall(userContent, { maxSearches: opts?.maxSearches });
+  const maxSearches = Math.max(
+    MIN_SEARCHES,
+    opts?.maxSearches ?? DEFAULT_MAX_SEARCHES,
+  );
+  return {
+    label: "researcher",
+    model: MODELS.researcher,
+    system: RESEARCHER_SYSTEM_PROMPT,
+    userContent,
+    schema: ANCHOR_SKELETON_SCHEMA as unknown as Record<string, unknown>,
+    guard: isAnchorSkeleton,
+    maxTokens: RESEARCHER_MAX_TOKENS,
+    // Server-side web search; max_uses bounds cost per call (attempt-dependent,
+    // floored at MIN_SEARCHES).
+    tools: [
+      { type: "web_search_20260209", name: "web_search", max_uses: maxSearches },
+    ],
+  };
+}
+
+export async function researchSlot(
+  slot: ResearchSlot,
+  opts?: ResearchSlotCallOpts,
+): Promise<ResearcherCallResult> {
+  return finalizeResearcherResult(
+    await runStructuredCall(slotCallOptions(slot, opts)),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -428,22 +446,12 @@ export type SearchOutcome =
 // blocks/recoveries with zero API calls. Defaults to the real researcher.
 export type SearchFn = (
   slot: ResearchSlot,
-  opts?: {
-    tier?: TierTarget;
-    attempt?: number;
-    avoidPublishers?: string[];
-    maxSearches?: number;
-  },
+  opts?: ResearchSlotCallOpts,
 ) => Promise<ResearcherCallResult>;
 
 export async function searchSlotWithBackoff(
   slot: ResearchSlot,
-  opts?: {
-    tier?: TierTarget;
-    attempt?: number;
-    avoidPublishers?: string[];
-    maxSearches?: number;
-  },
+  opts?: ResearchSlotCallOpts,
   searchFn: SearchFn = researchSlot,
 ): Promise<SearchOutcome> {
   const blockCodes: string[] = [];
