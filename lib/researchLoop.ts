@@ -51,6 +51,7 @@ import {
   type CraapValidationResult,
   type SlotDefinition,
 } from "./craapValidator";
+import { cacheGet, cacheSet } from "./researchCache";
 
 // Attempt budget: DEFAULT 1, earn the rest. The first attempt is the cheap,
 // unescalated default — resolve the slot, score it, and if CRAAP clears the
@@ -130,6 +131,7 @@ export type LoopAttempt = {
   blendedScore: number; // = craap.weightedTotal (computed in CRAAP code)
   purposePass: boolean; // = craap.purpose.gate === "pass"
   passed: boolean; // purposePass AND blendedScore >= threshold
+  model: string; // researcher model that produced the skeleton (provenance)
   usage: { inputTokens: number; outputTokens: number }; // researcher + CRAAP
 };
 
@@ -148,6 +150,10 @@ export type SlotLoopResult = {
   failedThreshold: boolean; // every tier was evaluated and none passed (quality)
   rateLimited: boolean; // a search was unrecoverably blocked (infrastructure)
   deadEnd: boolean; // researcher's typed verdict: no sourceable figure exists
+  // Result replayed from the slot-results cache (V6.16.2): a prior ACCEPTED
+  // run's skeleton + CRAAP score, no live calls made. Never a live masquerade —
+  // consumers can and should surface this.
+  fromCache: boolean;
   searchRounds: SearchRound[];
   attempts: LoopAttempt[]; // CRAAP evaluations only
   winnerAttempt: number | null; // null if no source was ever evaluated
@@ -187,6 +193,44 @@ export async function resolveSlotWithRetry(
   const totalUsage = { inputTokens: 0, outputTokens: 0 };
   let halted = false; // a search was unrecoverably rate-limited
   let deadEndSeam: AssumptionFallbackEntry | null = null; // researcher dead-ended
+
+  // Cache replay (V6.16.2, opt-in via RESEARCH_CACHE): only ACCEPTED results
+  // are ever stored, but re-check the pass condition at read time in CODE so a
+  // later-raised threshold turns a stale entry into a miss, never a free pass.
+  const cached = cacheGet(slot);
+  if (cached) {
+    const blendedScore = cached.craap.weightedTotal;
+    const purposePass = cached.craap.purpose.gate === "pass";
+    if (purposePass && blendedScore >= CRAAP_THRESHOLD) {
+      const attempt: LoopAttempt = {
+        attempt: 1,
+        tier: 1,
+        skeleton: cached.skeleton,
+        craap: cached.craap,
+        blendedScore,
+        purposePass,
+        passed: true,
+        model: cached.researcherModel,
+        usage: { inputTokens: 0, outputTokens: 0 }, // replay costs nothing
+      };
+      return {
+        ok: true,
+        slot,
+        threshold: CRAAP_THRESHOLD,
+        outcome: "resolved",
+        resolved: true,
+        failedThreshold: false,
+        rateLimited: false,
+        deadEnd: false,
+        fromCache: true,
+        searchRounds: [],
+        attempts: [attempt],
+        winnerAttempt: 1,
+        assumptionSeam: null,
+        totalUsage: { inputTokens: 0, outputTokens: 0 },
+      };
+    }
+  }
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const tier = attempt as TierTarget;
@@ -257,6 +301,7 @@ export async function resolveSlotWithRetry(
       blendedScore,
       purposePass,
       passed,
+      model: search.result.model,
       usage: {
         inputTokens: search.usage.inputTokens + craap.usage.inputTokens,
         outputTokens: search.usage.outputTokens + craap.usage.outputTokens,
@@ -280,6 +325,17 @@ export async function resolveSlotWithRetry(
         : "failed_threshold";
   const winner = attempts.length > 0 ? pickBest(attempts) : null;
 
+  // Cache on ACCEPT only (V6.16.2): a resolved slot's winning skeleton is
+  // stored WITH its CRAAP score so a future hit skips both live calls. Failed,
+  // rate-limited, and dead-end outcomes are never cached.
+  if (outcome === "resolved" && winner) {
+    cacheSet(slot, {
+      skeleton: winner.skeleton,
+      craap: winner.craap,
+      researcherModel: winner.model,
+    });
+  }
+
   return {
     ok: true,
     slot,
@@ -289,6 +345,7 @@ export async function resolveSlotWithRetry(
     failedThreshold: outcome === "failed_threshold",
     rateLimited: outcome === "rate_limited",
     deadEnd: outcome === "dead_end",
+    fromCache: false,
     searchRounds,
     attempts,
     // A dead end resolves to no figure: never surface a winner the consumer

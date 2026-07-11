@@ -72,6 +72,9 @@ export type ResolvedSlotView = {
   source: SlotSource | null;
   craapScore: number | null; // winner attempt's blended CRAAP weightedTotal
   purposeGate: "pass" | "fail" | null;
+  // True when the slot was replayed from the slot-results cache (a prior
+  // ACCEPTED run) rather than researched live — surfaced, never hidden.
+  fromCache: boolean;
   // Loud reason when a slot did not yield a usable number (never silently zeroed).
   unresolvedReason: string | null;
 };
@@ -167,6 +170,7 @@ function viewSlot(slot: ResearchSlot, result: SlotLoopResult): ResolvedSlotView 
       : null,
     craapScore: winner ? winner.blendedScore : null,
     purposeGate: winner ? (winner.purposePass ? "pass" : "fail") : null,
+    fromCache: result.fromCache,
     unresolvedReason: usable ? null : reasonFor(result),
   };
 }
