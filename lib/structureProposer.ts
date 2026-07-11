@@ -11,6 +11,8 @@
 // structurally incapable of returning a figure.
 import Anthropic from "@anthropic-ai/sdk";
 import { loadInstruction } from "./instructions";
+import { runStructuredCall } from "./anthropic";
+import { MODELS } from "./models";
 // The injection boundary is shared, not re-implemented: a security primitive
 // re-coded per component invites drift. The market name is user-supplied in
 // production, so it enters the prompt through wrapUntrusted() as untrusted data.
@@ -227,99 +229,48 @@ export type StructureProposalResult = {
   usage: { inputTokens: number; outputTokens: number };
 };
 
-export async function proposeStructure(): Promise<StructureProposalResult> {
-  // Key is read server-side only, inside the call, so a missing key is a clean
-  // per-request error rather than an import-time crash.
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new Error("ANTHROPIC_API_KEY is not set in the server environment");
-  }
-  const client = new Anthropic({ apiKey });
+// Output budget per proposer call. Adaptive thinking counts against
+// max_tokens; the intermittent empty-turn failure (~1/3 of runs) was the turn
+// ending before the final JSON, so this is sized with headroom and the shared
+// plumbing (lib/anthropic.ts) retries once with a doubled budget on an
+// empty/truncated/garbled turn.
+const PROPOSER_MAX_TOKENS = 8192;
 
+export async function proposeStructure(): Promise<StructureProposalResult> {
   const market = GERMANY_PROSTHETICS_MARKET;
   // Instruction lives in the system prompt; the user message carries the market
   // as untrusted data through the injection boundary.
-  let messages: Anthropic.MessageParam[] = [
-    {
-      role: "user",
-      content: `Propose the units-based market structure for the market in the data block.\n${wrapUntrusted(
-        `Country: ${market.country}\nMarket: ${market.market}`,
-      )}`,
-    },
-  ];
+  const userContent = `Propose the units-based market structure for the market in the data block.\n${wrapUntrusted(
+    `Country: ${market.country}\nMarket: ${market.market}`,
+  )}`;
 
-  const callModel = () =>
-    client.messages.create({
-      model: "claude-opus-4-8",
-      max_tokens: 4096,
-      thinking: { type: "adaptive" },
+  const { value, model, usage, content } =
+    await runStructuredCall<ProposedStructure>({
+      label: "structure proposer",
+      model: MODELS.structureProposer,
       system: STRUCTURE_SYSTEM_PROMPT,
+      userContent,
+      schema: STRUCTURE_SCHEMA as unknown as Record<string, unknown>,
+      guard: isProposedStructure,
+      maxTokens: PROPOSER_MAX_TOKENS,
       // Shape-only web search; the no-value schema enforces that nothing
       // numeric comes back. max_uses bounds cost per call.
       tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 5 }],
-      output_config: {
-        format: { type: "json_schema", schema: STRUCTURE_SCHEMA },
-      },
-      messages,
     });
 
   // Count web_search server-tool uses across all turns — diagnostic to confirm
   // shape-search actually fired (and stayed within max_uses).
-  const countWebSearchUses = (content: Anthropic.ContentBlock[]) =>
-    content.filter(
-      (b): b is Anthropic.ServerToolUseBlock =>
-        b.type === "server_tool_use" && b.name === "web_search",
-    ).length;
-
-  let response = await callModel();
-  const usage = { inputTokens: 0, outputTokens: 0 };
-  usage.inputTokens += response.usage.input_tokens;
-  usage.outputTokens += response.usage.output_tokens;
-  let webSearchUses = countWebSearchUses(response.content);
-
-  // Server-side tools can pause the turn at the API's iteration limit; re-send
-  // with the assistant turn appended and the server resumes. Bounded so a stuck
-  // turn cannot loop forever — turn plumbing, not a retry loop.
-  let continuations = 0;
-  while (response.stop_reason === "pause_turn" && continuations < 5) {
-    messages = [...messages, { role: "assistant", content: response.content }];
-    response = await callModel();
-    usage.inputTokens += response.usage.input_tokens;
-    usage.outputTokens += response.usage.output_tokens;
-    webSearchUses += countWebSearchUses(response.content);
-    continuations++;
-  }
-
+  const webSearchUses = content.filter(
+    (b): b is Anthropic.ServerToolUseBlock =>
+      b.type === "server_tool_use" && b.name === "web_search",
+  ).length;
   console.log(`[structure-proposer] web_search tool uses: ${webSearchUses}`);
-
-  const text = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("");
-
-  // Legibility guard (not a fix): the proposer intermittently ends a turn with
-  // no final text block — JSON.parse("") would otherwise throw an opaque
-  // SyntaxError. Label the real failure mode instead. Root cause
-  // (continuation/retry) is deferred to the research-loop phase; see CLAUDE.md
-  // known issues. stop_reason is included to aid that later diagnosis.
-  if (text.trim() === "") {
-    throw new Error(
-      `Structure proposer returned no JSON — turn ended without a final answer (stop_reason: ${response.stop_reason}).`,
-    );
-  }
-
-  const parsed: unknown = JSON.parse(text);
-  if (!isProposedStructure(parsed)) {
-    throw new Error(
-      `Structure proposer returned JSON outside the expected shape: ${text}`,
-    );
-  }
 
   return {
     ok: true,
     market,
-    structure: parsed,
-    model: response.model,
+    structure: value,
+    model,
     usage,
   };
 }

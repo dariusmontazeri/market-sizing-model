@@ -20,9 +20,10 @@
 //             semantic double-count hides in the chain, etc.
 // The overall pass/fail is rolled up HERE, in code, from the per-check verdicts
 // (AI does judgment, code does the arithmetic — Principle 4/5).
-import Anthropic from "@anthropic-ai/sdk";
 import { loadInstruction } from "./instructions";
-import { wrapUntrusted } from "./researcher";
+import { runStructuredCall } from "./anthropic";
+import { MODELS } from "./models";
+import { wrapUntrusted, type MarketRef } from "./researcher";
 import {
   ANCHOR_TYPES,
   PRICE_BASES,
@@ -31,7 +32,9 @@ import {
   type ProposedStructure,
 } from "./structureProposer";
 
-export type MarketRef = { country: string; market: string };
+// One MarketRef across the pipeline (defined in researcher.ts, re-exported here
+// so existing importers keep working).
+export type { MarketRef };
 
 // What the validator receives: the proposer's full structured output (including
 // its self-checks, which Stage 2 grades) plus the market it was proposed for.
@@ -289,13 +292,9 @@ export async function validateStructure(
     };
   }
 
-  // Stage 2 — model judgment. Key read server-side only, inside the call.
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new Error("ANTHROPIC_API_KEY is not set in the server environment");
-  }
-  const client = new Anthropic({ apiKey });
-
+  // Stage 2 — model judgment via the shared plumbing (client, continuations,
+  // and the empty-turn/truncation reliability retry live in lib/anthropic.ts).
+  //
   // The structure is the proposer's output, ultimately derived from user input
   // and fetched web content — so it enters as UNTRUSTED DATA through the shared
   // injection boundary. Stage-1 flags are code-generated and trusted, so they
@@ -311,42 +310,24 @@ export async function validateStructure(
     JSON.stringify(payload, null, 2),
   )}`;
 
-  const response = await client.messages.create({
-    model: "claude-opus-4-8",
+  const { value, model, usage } = await runStructuredCall<Stage2Checks>({
+    label: "structural validator",
+    model: MODELS.structuralValidator,
+    system: STRUCTURAL_SYSTEM_PROMPT,
+    userContent,
+    schema: STAGE2_SCHEMA as unknown as Record<string, unknown>,
+    guard: isStage2Checks,
     // Adaptive thinking + six per-check verdicts; 2048 (sized for five checks)
     // overflowed and ended the turn on max_tokens before the final JSON.
-    max_tokens: 4096,
-    thinking: { type: "adaptive" },
-    system: STRUCTURAL_SYSTEM_PROMPT,
+    // Doubled once by the shared plumbing on a reliability retry.
+    maxTokens: 4096,
     // No tools: the shape gate reasons only from the surfaced structure and its
     // own knowledge. It must not research, so it has no web access.
-    output_config: {
-      format: { type: "json_schema", schema: STAGE2_SCHEMA },
-    },
-    messages: [{ role: "user", content: userContent }],
   });
-
-  const text = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("");
-
-  if (text.trim() === "") {
-    throw new Error(
-      `Structural validator returned no JSON — turn ended without a final answer (stop_reason: ${response.stop_reason}).`,
-    );
-  }
-
-  const parsed: unknown = JSON.parse(text);
-  if (!isStage2Checks(parsed)) {
-    throw new Error(
-      `Structural validator returned JSON outside the expected shape: ${text}`,
-    );
-  }
 
   // Code rolls up the overall verdict from the per-check judgments.
   const stage2Passed = STAGE2_CHECK_IDS.every(
-    (id) => parsed[id].verdict === "pass",
+    (id) => value[id].verdict === "pass",
   );
 
   return {
@@ -354,11 +335,8 @@ export async function validateStructure(
     market,
     passed: stage1.passed && stage2Passed,
     stage1,
-    stage2: { passed: stage2Passed, checks: parsed },
-    model: response.model,
-    usage: {
-      inputTokens: response.usage.input_tokens,
-      outputTokens: response.usage.output_tokens,
-    },
+    stage2: { passed: stage2Passed, checks: value },
+    model,
+    usage,
   };
 }

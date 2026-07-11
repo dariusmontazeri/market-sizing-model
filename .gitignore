@@ -38,6 +38,7 @@ yarn-error.log*
 
 # local scratch: extracted planning-doc text (source of truth lives in Drive)
 .planning-doc.txt
+Market Sizing Tool Planning Document.md
 
 # typescript
 *.tsbuildinfo

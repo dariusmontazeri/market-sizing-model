@@ -6,8 +6,9 @@
 // AI does judgment, code does arithmetic: the model emits per-dimension
 // scores and reasoning; the relevance roll-up and the weighted total are
 // computed HERE, in code, with locked weights.
-import Anthropic from "@anthropic-ai/sdk";
 import { loadInstruction } from "./instructions";
+import { runStructuredCall } from "./anthropic";
+import { MODELS } from "./models";
 import type { AnchorSkeleton } from "./researcher";
 
 export type SlotDefinition = {
@@ -175,65 +176,40 @@ export async function validateSkeleton(
   slot: SlotDefinition,
   skeleton: AnchorSkeleton,
 ): Promise<CraapValidationResult> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new Error("ANTHROPIC_API_KEY is not set in the server environment");
-  }
-  const client = new Anthropic({ apiKey });
-
-  const response = await client.messages.create({
-    model: "claude-opus-4-8",
-    // Adaptive thinking + four scored dimensions + the Purpose gate; 4096 keeps
-    // headroom so the turn doesn't end on max_tokens before the final JSON.
-    max_tokens: 4096,
-    thinking: { type: "adaptive" },
+  // Shared plumbing (lib/anthropic.ts) owns the client, continuations, and the
+  // empty-turn/truncation reliability retry. Adaptive thinking + four scored
+  // dimensions + the Purpose gate; 4096 keeps headroom so the turn doesn't end
+  // on max_tokens before the final JSON (doubled once on a reliability retry).
+  const { value, model, usage } = await runStructuredCall<CraapModelOutput>({
+    label: "CRAAP validator",
+    model: MODELS.craapValidator,
     system: CRAAP_SYSTEM_PROMPT,
-    output_config: {
-      format: { type: "json_schema", schema: CRAAP_SCHEMA },
-    },
-    messages: [
-      {
-        role: "user",
-        content: `Slot definition:\n${JSON.stringify(slot, null, 2)}\n\nFilled skeleton to grade:\n${JSON.stringify(skeleton, null, 2)}`,
-      },
-    ],
+    userContent: `Slot definition:\n${JSON.stringify(slot, null, 2)}\n\nFilled skeleton to grade:\n${JSON.stringify(skeleton, null, 2)}`,
+    schema: CRAAP_SCHEMA as unknown as Record<string, unknown>,
+    guard: isCraapModelOutput,
+    maxTokens: 4096,
   });
-
-  const text = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("");
-
-  const parsed: unknown = JSON.parse(text);
-  if (!isCraapModelOutput(parsed)) {
-    throw new Error(
-      `CRAAP validator returned JSON outside the expected shape or score range: ${text}`,
-    );
-  }
 
   // Arithmetic lives here, not in the model.
   const relevanceScore =
-    (parsed.relevance.geography_match.score +
-      parsed.relevance.population_match.score +
-      parsed.relevance.metric_match.score) /
+    (value.relevance.geography_match.score +
+      value.relevance.population_match.score +
+      value.relevance.metric_match.score) /
     3;
   const weightedTotal =
-    CRAAP_WEIGHTS.authority * parsed.authority.score +
+    CRAAP_WEIGHTS.authority * value.authority.score +
     CRAAP_WEIGHTS.relevance * relevanceScore +
-    CRAAP_WEIGHTS.currency * parsed.currency.score +
-    CRAAP_WEIGHTS.accuracy * parsed.accuracy.score;
+    CRAAP_WEIGHTS.currency * value.currency.score +
+    CRAAP_WEIGHTS.accuracy * value.accuracy.score;
 
   return {
     ok: true,
-    dimensions: parsed,
+    dimensions: value,
     relevanceScore: round3(relevanceScore),
     weights: CRAAP_WEIGHTS,
     weightedTotal: round3(weightedTotal),
-    purpose: parsed.purpose,
-    model: response.model,
-    usage: {
-      inputTokens: response.usage.input_tokens,
-      outputTokens: response.usage.output_tokens,
-    },
+    purpose: value.purpose,
+    model,
+    usage,
   };
 }
