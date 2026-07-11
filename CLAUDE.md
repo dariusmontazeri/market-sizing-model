@@ -9,192 +9,127 @@ The visible structure IS the product. Works for ANY market the user types
 (Germany prosthetics is only the golden test, not the scope).
 
 ## Current phase
-Phase 3: units-based branch. Deterministic math (`lib/units-math.ts`) is
-WIRED to the UI: "Run sizing" runs it on a HARDCODED, unvalidated Germany
-prosthetics input and fills the waterfall. Waterfall slices (label left,
-value right): Market definition, Anchor, Filters, Average price, Replacement
-layer. SAM$ and SOM bear/base/bull live ONLY in the Output section, not in the
-waterfall. The typed Country/Market fields do NOT drive the numbers.
-Credibility score stays "pending" until wired — never faked. Number accuracy
-is NOT yet validated against the hand-done Germany figures (that is Phase 4).
+Phase 4: Germany number validation, units-based branch. The back half runs
+end-to-end behind the dev structure pin. The UI still renders hardcoded
+placeholder math ("Run sizing" -> lib/units-math.ts on placeholder inputs);
+credibility renders "pending" — never faked. UI wiring of the scored result
+object is deferred (build focus is the tool itself).
 
-Researcher v1.1 exists (`lib/researcher.ts` + `app/api/researcher`): one
-isolated server-side Claude call (claude-opus-4-8; model choice revisited at
-Germany validation) with LIVE web search (Anthropic built-in web_search tool,
-max 5 searches/call). Proven: the pipe; the injection boundary (ALL untrusted
-text — user input AND fetched web content — is data, never instructions;
-verified against a hostile string); anchor-slot query construction returning
-the full extraction skeleton via structured outputs (every field present or
-explicitly null — a null is a flag, never a guess); filled values come from
-real fetched sources traced to the PRIMARY publisher (cited in
-author_publisher; intermediaries noted only as path in metric_definition);
-materially conflicting figures reported, never silently dropped. Verified
-3/3 local + 1 prod run citing Destatis (prod CRAAP total 0.911); weightedTotal
-spread tightened 0.101 -> 0.031. No retry loop, no tier traversal. ~26K input
-tokens per researched slot — revisit at multi-slot scale.
+### Components (each ONE isolated call; runtime order: proposer -> structural
+### validator -> researcher -> CRAAP -> code)
+- Structure proposer (`lib/structureProposer.ts`, Opus): the judgment core.
+  Proposes the model SHAPE via the reverse-engineering method (addressable_unit
+  -> distinctions -> filters -> anchor_type -> price_basis) plus gap_check /
+  double_count_check self-checks. NO-VALUE schema — structurally incapable of
+  returning a figure. SHAPE-ONLY web search (learn market structure, never
+  figures). Hardcoded Germany market until the front half is wired. Germany-
+  verified; reference fixture at scripts/structure-proposer.germany.json.
+- Structural validator (`lib/structuralValidator.ts`, Opus): sole pre-research
+  SHAPE GATE. Stage 1 = deterministic code checks, short-circuits before any
+  model call. Stage 2 = one isolated call, no web, six pass/fail verdicts
+  (anchor_appropriate, gap_check_grade, semantic_double_count,
+  distinctions_genuine, price_basis_match, filter_narrows_demand). Code rolls
+  up the verdict; a fail bounces the structure to the proposer.
+- Researcher (`lib/researcher.ts`, Sonnet 5): resolves ONE slot per isolated
+  call with live web_search (ceiling 3 on the first attempt / 5 escalated,
+  floored at 3 — trace-back is search-hungry). Structured-output skeleton:
+  every field present or explicit null (a null is a flag, never a guess).
+  Trace-back to primary with NAME/LINK AGREEMENT — author_publisher and
+  source_url must describe the SAME source; when the primary's own page can't
+  be located, cite the intermediary + its URL and flag "primary not directly
+  locatable" (fixes the real-run Destatis-name/PMC-link defect). Denominator
+  rule: a rate over a different base is reported as a mismatch, never forced.
+  Disconfirmation: conflicting figures reported, never dropped. Typed
+  resolution_status found|miss|dead_end (dead_end only with positive evidence).
+- CRAAP validator (`lib/craapValidator.ts`, Sonnet 5): grades a filled skeleton
+  cold — own call, sees ONLY slot definition + skeleton, no web. Model emits
+  0-1 dimension scores (metric_match explicitly tests DENOMINATOR-match) and a
+  Purpose gate; relevance mean + weighted total computed in CODE with locked
+  weights (Authority .30, Relevance .30, Currency .25, Accuracy .15).
+  CRAAP_THRESHOLD = 0.7 lives here, applied by the loop — CRAAP scores, never
+  routes. NOTE: the as-built Purpose GATE (a fail disqualifies the source in
+  the loop) is stricter than planner V6.5 ("informational flag, no gate in
+  v1"); it caught the promotional price sources on the real run. Doc-vs-code
+  conflict pending a planner decision — the code behavior stands until then.
+- Code: research loop (`lib/researchLoop.ts`) — attempt budget DEFAULT 1, earn
+  2 more only on a sub-0.7 CRAAP verdict; tier descent (attempt N targets tier
+  N) + keep-best; web_search spacing (~2s) + exponential backoff (2/4/8)
+  distinguishing a rate-limit BLOCK (retry same tier; exhausted -> rate_limited
+  halt) from a CRAAP FAILURE (descend); early-stop on dead_end routing to the
+  assumption-fallback SEAM (typed, emits NO value — the fallback BODY is still
+  TODO). Orchestrator (`lib/orchestrator.ts`) — structure -> deriveResearchSlots
+  (each filter slot states its exact DENOMINATOR = survivors of the previous
+  cut) -> loop per slot -> adapter -> units-math -> scored result object.
+  NO silent null->0: any unresolved slot marks the run INCOMPLETE, sizing null.
+  Credibility = code-mean of resolved slots' CRAAP. Verified offline
+  (test-orchestrator-dryrun.ts) + one real pinned Germany run
+  (scripts/pinned-germany.result.json, INCOMPLETE — honesty gates held).
 
-CRAAP validator v1 exists (`lib/craapValidator.ts` + `app/api/craap`): second
-isolated component — own API call, receives ONLY slot definition + filled
-skeleton, never the researcher's reasoning. Scores per the architecture
-section (0-1 dimensions, locked weights, arithmetic in code). Judges from
-skeleton fields only — no web access. Now also emits a Purpose GATE
-(fit-for-objective-sizing pass/fail) beyond the four scored dimensions;
-CRAAP_THRESHOLD = 0.7 lives here but is applied by the research loop — CRAAP
-itself still only scores, never routes.
+### Shared infrastructure
+- `lib/models.ts`: per-component model config, the ONLY place a model is named.
+  Proposer + structural validator = claude-opus-4-8; researcher + CRAAP =
+  claude-sonnet-5 (Sonnet 4.6 lacks documented structured-outputs support;
+  Sonnet 5 is the same list price and supports the same web_search tool).
+  Sonnet verified live on CRAAP (scripts/smoke-craap-live.ts, 8/8).
+- `lib/anthropic.ts`: shared structured-call plumbing for all four components
+  (client, pause_turn continuations, text extraction, JSON parse + output
+  guard) + the reliability layer: the two formerly-deferred failure classes
+  (proposer empty final turn ~1/3; researcher/validator max_tokens
+  truncation/garble) now get ONE full-call retry with doubled max_tokens,
+  loud console.warn, fail-closed labeled error. Proven offline
+  (scripts/test-structured-call.ts 7/7, zero API) and live (the structural
+  validator truncated at 4096 and self-healed at 8192). This CLOSES the former
+  proposer-reliability gate on front-half wiring. Researcher/proposer base
+  output budget is 8192 (adaptive thinking counts against max_tokens; Sonnet
+  5's tokenizer runs ~30% more tokens).
+- `lib/researchCache.ts`: slot-results cache (V6.16.2) — OFF by default,
+  opt-in RESEARCH_CACHE=1, local .research-cache/ JSON (gitignored) behind a
+  thin get/set seam (hosted KV at pre-launch). Cache on ACCEPT only: a
+  resolved slot's skeleton + CRAAP score stored together; a hit replays both
+  with ZERO live calls and zero usage and is marked fromCache (surfaced in the
+  result view — a replay is transparently a prior run). Entries are re-gated
+  against CRAAP_THRESHOLD in code at read time. Cheaper and faster, never
+  smarter: it does not train on its own runs. Offline-proven
+  (scripts/test-research-cache.ts 16/16).
+- Dev structure pin (`lib/structurePin.ts`, PIN_STRUCTURE env flag, OFF by
+  default and in prod): loads the VALIDATED 2-filter Germany structure straight
+  into the loop, bypassing proposer + validator — a dev affordance only; the
+  live path always runs the full chain. NOTE (2026-07-10): a 3-filter variant
+  (candidacy split into fitting rate ~30% + mobility grade ~95%, matching the
+  hand model) was REJECTED by the structural validator on semantic_double_count
+  (low mobility is often WHY a recipient is never fitted, so the two cuts
+  overlap). The rejected variant is preserved at
+  scripts/structure-pin.3filter-rejected.ts.txt pending a decision; the
+  validated 2-filter pin stands. Re-validate the pin whenever it or the
+  validator changes (scripts/validate-pinned-structure.ts, one live call).
 
-Structure proposer v1 EXISTS (`lib/structureProposer.ts` +
-`app/api/structure-proposer`, instructions in instructions/structureProposer.md).
-Phase 1 of the units-based method and the FIRST component to run, before the
-researcher. The judgment core: takes a market and proposes the model's SHAPE
-via the reverse-engineering method (Section 6B Phase 1) — addressable_unit ->
-distinctions -> filters -> anchor_type -> price_basis — as an empty labeled
-skeleton, plus two self-check fields (gap_check, double_count_check). NEVER
-finds or records a value (researcher's job): the structured-output schema has
-NO numeric/enum-only-or-string leaves, so it is structurally incapable of
-returning a number. One isolated call; SHAPE-ONLY web search allowed (to learn
-market structure e.g. mobility-grade gating — NOT to find figures); the market
-input enters through wrapUntrusted(), fetched web content is defended by the
-system prompt (server-injected search results can't be wrapped — same posture
-as the researcher). Hardcoded test market: Germany prosthetics. Verified on
-Germany: valid JSON, zero numbers, anchor_type=event_count, independently
-re-derived the major-vs-minor / fitment / mobility-grade distinctions
-(Mobilitätsklasse tell present), substantive gap_check (catches the
-replacement/renewal undercount) and double_count_check. A reference fixture
-from a passing run is committed at scripts/structure-proposer.germany.json.
-NOT yet wired live into the researcher or the waterfall (components are tested
-against the saved fixture, not chained live).
+### Phase 4 open items
+- Known-hard slots from the real run: filter[1] (candidacy rate, CRAAP 0.153)
+  and price (CRAAP 0.25, purpose FAIL — sources priced a prosthetic SOCKET
+  component, not a whole device). Both correctly null; sourcing them is the
+  Phase-4 work, not a wiring defect.
+- Provenance/denominator fixes are IN at the instruction level but NOT yet
+  verified live. Acceptance: the anchor's source_url resolves to a page
+  matching author_publisher, or carries the explicit "primary not directly
+  locatable" flag; filter rates match their stated denominators.
+- Replacement layer: replacementRate is a hardcoded flagged assumption (0.5),
+  excluded from credibility. General fix: the proposer emits a replacement
+  sub-structure (cadence x installed base) for ANY renewal market.
+- Assumption fallback BODY (Slice 3): the seam exists and emits no value.
 
-Structural validator EXISTS (`lib/structuralValidator.ts` + instructions/
-structural.md + `app/api/structural-validator`): the sole pre-research SHAPE
-GATE. Stage 1 = deterministic code checks (anchor/price kind valid, every
-filter's distinction_ref resolves, no repeated ref, required fields + unique
-labels; an out-of-range filter count is flagged, not failed) and short-circuits
-before any model call. Stage 2 = one isolated Opus call, no web search, six
-pass/fail verdicts (anchor_appropriate, gap_check_grade, semantic_double_count,
-distinctions_genuine, price_basis_match, and filter_narrows_demand — a filter
-must cut real demand, not gate a supply-side execution step). Code rolls up the
-overall verdict; a fail bounces the structure back to the proposer. On the
-Germany fixture the Hilfsmittel reimbursable-listing filter correctly fails
-filter_narrows_demand while the other five pass.
+### Next, in order
+1. Phase 4 Germany number validation (pin ON, RESEARCH_CACHE=1): re-run the
+   back half, verify provenance/denominator behavior live, source the two hard
+   slots, reconcile against the hand-done figures.
+2. Proposer front-half wiring (pin OFF on the live path: proposer -> validator
+   -> loop) — unblocked now that the reliability retry ships.
+3. UI render of the scored result object + its API route.
+4. Other three methods, then the router, then pre-launch hardening (hosted
+   cache/KV, global cap + per-user cooldown, injection battery, key rotation,
+   Vercel bot-protection resolution).
 
-Researcher REWIRED to consume a validated structure (`deriveResearchSlots` +
-`researchValidatedStructure`): turns a structure into ordered slots in code
-(anchor -> each filter rate -> price) and resolves each via its own isolated
-call, sequentially. Anchor is atomic for v1 (composed/derived-precision anchor
-deferred).
-
-Research loop (`lib/researchLoop.ts`, `resolveSlotWithRetry`) — Slices 1 & 2
-SHIPPED + pushed (latest 762ab9e):
-- Slice 1: CRAAP-driven retry + tier descent (attempt N targets tier N, 3
-  attempts) + keep-best across attempts; all arithmetic and routing in code.
-- Efficiency tightening (pre-Germany): attempt budget is now DEFAULT 1, earn the
-  rest — the first attempt accepts + stops the moment CRAAP clears 0.7; the 2
-  further attempts are spent ONLY on a sub-0.7 verdict (escalate on evidence).
-  web_search ceiling is attempt-dependent: 3 on the first attempt, 5 on an
-  escalated one (floored at 3 in the researcher — trace-back is search-hungry).
-  Keep-best unchanged but dormant on the single-attempt path. Proven by a
-  deterministic offline budget test (scripts/test-research-loop-budget.ts:
-  accept-on-first-pass, 3/5 ceiling captured per attempt, keep-best on escalation).
-- Slice 2: web_search spacing (~2s) + exponential backoff (2/4/8) that
-  distinguishes a rate-limit BLOCK (retry the SAME tier; exhausted -> a
-  rate_limited halt, no invented value) from a CRAAP FAILURE (descend a tier).
-  A deterministic offline test proves all three classes at zero API cost.
-- Early-stop-on-dead-end: SHIPPED. Researcher contract (resolution_status
-  found|miss|dead_end + resolution_reason in the skeleton schema + strengthened
-  guard; instruction uses dead_end only with positive evidence of non-existence)
-  AND the loop handler: a third failure class, distinct from blocked-search and
-  CRAAP-fail. On resolution_status === "dead_end" the loop STOPS before CRAAP (a
-  dead end has no source to score), does NOT descend a tier, consumes no further
-  attempts, and routes the slot to a typed assumption-fallback SEAM
-  (enterAssumptionFallback -> AssumptionFallbackEntry, value always null). The
-  dead end is read ONLY from the typed field — code never infers it from
-  null/empty/miss (a miss still flows to CRAAP + descent). Deterministic offline
-  test (scripts/test-research-loop-deadend.ts) proves all three classes route
-  correctly, incl. dead_end consuming no further attempts and emitting no number
-  even when the skeleton adversarially carries a value. The assumption fallback
-  BODY itself (Slice 3) is still TODO (not built — the seam returns no value).
-
-Dev-only structure pin (`lib/structurePin.ts`, Option A): PIN_STRUCTURE env flag
-(OFF by default, OFF in prod) loads a known-good VALIDATED Germany structure
-straight into the research loop, bypassing BOTH the proposer and the structural
-validator — a dev affordance for the expensive Germany phase. PRODUCTION PATH
-UNTOUCHED: with the flag off the live path always runs proposer -> validator ->
-loop, and nothing runs unless a caller first checks isStructurePinned(). The
-pinned const is the committed proposer fixture with the phantom Hilfsmittel
-reimbursable-listing filter (+ its orphaned distinction) REMOVED; it passed the
-structural validator once (Stage 1 5/5, Stage 2 6/6 incl. filter_narrows_demand)
-via scripts/validate-pinned-structure.ts, and its Stage-1 integrity + flag
-behavior are asserted offline in scripts/test-structure-pin.ts.
-
-Back-half orchestrator SHIPPED (`lib/orchestrator.ts`) — FIRST end-to-end wiring,
-pin ON: load pinned validated Germany structure -> deriveResearchSlots -> run the
-research loop per slot (each its own isolated researcher + CRAAP call) -> ADAPTER
-into the waterfall math -> scored result object. runBackHalfSizing is the pure
-structure-in/result-out core; runPinnedGermanySizing is the pin-gated dev entry
-(throws if PIN_STRUCTURE off — proposer front-half not wired yet). Adapter: anchor
--> SizingInput.anchor, each filter -> a proportion (a >1 value is normalized as a
-percentage, recorded not silent), price -> unitPrice; credibility = code-mean of
-resolved slots' CRAAP weightedTotal. Independence preserved BY CONSTRUCTION (code
-wires output->input only; slots derive from the STRUCTURE, never another slot's
-result). NO silent null->0: any unresolved/dead-end slot marks the result
-INCOMPLETE, surfaces the slot loudly, and the waterfall is NOT computed (sizing
-null). Verified by a deterministic dry-run (scripts/test-orchestrator-dryrun.ts,
-zero API) on BOTH the complete path (SAM$/SOM bear-base-bull/replacement correct)
-and the INCOMPLETE path (dead-end slot -> no zero-fill), and by ONE real pinned
-Germany run (scripts/run-pinned-germany.ts) that exercised every seam live — this
-supersedes the deferred single-slot scripts/test-research-loop.ts (a superset).
-Result printed to scripts/pinned-germany.result.json. The real run came back
-INCOMPLETE — see Phase 4 items below; the wiring + honesty gate held correctly.
-
-KNOWN ISSUES (recorded, deliberately deferred):
-- Structure proposer intermittently returns an empty final turn (~1/3 of runs),
-  likely a token ceiling or the turn ending mid-tool-cycle. It fails closed
-  (clean 500; a legibility guard now throws a descriptive "no JSON — turn ended
-  without a final answer" error instead of an opaque JSON.parse SyntaxError).
-  This MUST be resolved in the research-loop phase before anything depends on
-  the proposer — root cause is continuation/retry, which belongs there. This is
-  a GATE on the research loop, not a passing concern.
-- The proposer's runtime guard (isProposedStructure) checks SHAPE only, not
-  semantic coherence: it does not enforce distinction/filter count parity,
-  that each filter's distinction_ref matches a listed distinction, or label
-  uniqueness. Real but not urgent — the structural validator will catch
-  incoherent structures downstream. Deferred.
-- Researcher intermittently returns a MALFORMED skeleton — a garbled
-  structured-output JSON (observed in a Germany price-slot run: value 21,
-  units ",", corrupted date ".Ers c RanA...", broken ".t://" URL). Same class
-  as the proposer empty-turn issue: the call likely hit its max_tokens ceiling
-  mid-JSON or a transient structured-output failure. It fails safe here — the
-  skeleton still schema-validates and CRAAP correctly rejected it (authority
-  0.08, purpose fail), so the pipeline stayed robust — but the data is junk.
-  Belongs with the research-loop/continuation reliability work alongside the
-  proposer fix; do NOT treat as a one-off. Deferred.
-
-PHASE 4 — from the first real pinned Germany run (recorded, NOT this slice's job):
-- PROVENANCE INTEGRITY (higher priority — touches a component thought solved): on
-  the real run, author_publisher reads "Destatis" on the anchor and filter[0] but
-  their source_urls point to PMC/MDPI intermediaries, NOT Destatis. The V6.3
-  trace-back behavior was previously MEASURED fixed (Authority spread tightened to
-  0.031). Investigate whether this is correct path-note behavior (primary publisher
-  in author_publisher, intermediary recorded as path) with a misleading source_url,
-  OR genuine misattribution ("Destatis" over-claimed for a figure actually from the
-  paper). Possible regression — do NOT file as generic research-quality.
-- Research-quality on the known-hard slots: filter[1] (mobility-grade candidacy
-  rate, CRAAP 0.153) and price (CRAAP 0.25, purpose-gate FAIL) did not clear the
-  0.7 threshold; both correctly returned null (not zero-filled), marking the run
-  INCOMPLETE. Sourcing/validating these is Phase 4, not a wiring defect.
-- Replacement layer generalization: replacementRate is currently a hardcoded
-  flagged assumption (0.5) with no slot. The general fix is for the proposer to
-  emit a replacement sub-structure (cadence x installed base) for ANY market with a
-  renewal dynamic, sourced like any other slot — not a prosthetics-only constant.
-
-Next: wire the proposer front-half (proposer -> structural validator -> the
-orchestrator's structure input, replacing the pin on the live path), then the UI
-render of the scored result object. The assumption fallback (Slice 3) and the
-Phase-4 items above remain open. The proposer empty-turn / researcher-garble
-continuation issues (above) gate the proposer front-half wiring. (The single-slot
-scripts/test-research-loop.ts is now SUPERSEDED by the full-chain real run.)
-
-The full spec is the Google Drive planning doc (now at V6) — source of truth.
+The full spec is the planning doc (Drive, V6.16; local extract in the repo is
+gitignored) — source of truth.
 
 ## Architecture — two layers
 - Router: classifies the market, picks one of four sizing methods, states why.
@@ -237,11 +172,11 @@ Runtime order: proposer -> structural validator -> researcher -> CRAAP -> code.
 ## Build order
 1. Units-based branch first, against the Germany prosthetics golden test.
    Static UI -> deterministic math in code -> agents wired in one at a time as
-   isolated calls. Built so far: researcher, then CRAAP validator. Next:
-   structure proposer (Phase 1 shape), then structural validator (shape gate),
-   then rewire researcher onto the validated structure -> research loop with
-   retries + assumption fallback.
-2. Validate against Germany, then 2-3 other markets.
+   isolated calls -> research loop with retries -> back-half orchestration.
+   All built; assumption-fallback body and front-half wiring remain.
+2. Validate against Germany (current phase), then 2-3 other markets — include
+   one deliberately data-rich, easy market as a pipeline smoke test so
+   "pipeline broken" is separable from "market is hard to source".
 3. Then the other three methods. Then the router. Then ship.
 
 ## Stack
