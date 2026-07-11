@@ -110,13 +110,26 @@ export async function runStructuredBatch<T>(
         ),
       })),
     });
+    const label = pending[0].opts.label;
+    const t0 = Date.now();
+    console.log(
+      `[batch:${label}] wave ${wave}: submitted ${batch.id} (${pending.length} item${pending.length === 1 ? "" : "s"}) — queue wait can take minutes`,
+    );
 
     // Poll until the batch ends (results are not readable before that).
-    for (;;) {
+    for (let poll = 1; ; poll++) {
       const status = await client.messages.batches.retrieve(batch.id);
       if (status.processing_status === "ended") break;
+      if (poll % 10 === 0) {
+        console.log(
+          `[batch:${label}] wave ${wave}: still ${status.processing_status} after ${Math.round((Date.now() - t0) / 60_000)} min (normal — Batches SLA is up to 1h)`,
+        );
+      }
       await sleep(pollMs);
     }
+    console.log(
+      `[batch:${label}] wave ${wave}: ended after ${Math.round((Date.now() - t0) / 1000)}s`,
+    );
 
     const nextPending: ItemState<T>[] = [];
     const seen = new Set<string>();
